@@ -1,0 +1,17 @@
+{#
+  Logout page
+  - Minimal template extending `base.html` to reuse consolidated CSS and nav.
+  - Shows a simple message after logging out.
+#}
+
+{% extends 'base.html' %}
+
+{% block title %}Logout{% endblock %}
+
+{% block content %}
+  <section aria-labelledby="logout-heading">
+    <h3 id="logout-heading">You have now successfully logged out</h3>
+    <p class="muted">Thank you — you have been signed out.</p>
+    <p><a href="/">Return to home</a></p>
+  </section>
+{% endblock %}
