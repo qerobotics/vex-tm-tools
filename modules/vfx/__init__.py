@@ -1,3 +1,5 @@
+from ...tm_manager import MatchEntity
+
 class LightEntity:
     def __init__(self):
         self.light_id = light_id
@@ -27,4 +29,7 @@ class VFXModule:
         pass
 
     def control_light(self, light: LightEntity):
+        pass
+
+    def queue_effect_for_event(self, preset_id, event: EventEntity):
         pass

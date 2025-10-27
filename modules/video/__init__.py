@@ -10,3 +10,4 @@ class VideoModule:
 
     def change_camera(self, camera: CameraEntity):
         pass
+    
