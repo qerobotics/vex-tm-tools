@@ -13,13 +13,17 @@
   <form action="/service/auth" method="POST" aria-label="Login form">
     <div class="imgcontainer">
       <h2>Hello, please login below.</h2>
-      <!-- Avatar served from static files -->
-      <img src="{{ url_for('static', filename='img_avatar2.png') }}" alt="avatar" class="avatar">
+  <!-- Avatar served from static files (SVG) -->
+  <img src="{{ url_for('static', filename='img_avatar2.svg') }}" alt="avatar" class="avatar">
     </div>
 
     <div class="container">
+      {# Show an error message when provided by the auth service #}
+      {% if error %}
+        <div class="alert alert-error" role="alert">{{ error }}</div>
+      {% endif %}
       <label for="uname"><b>Username</b></label>
-      <input id="uname" name="uname" type="text" placeholder="Enter Username" required>
+      <input id="uname" name="uname" type="text" placeholder="Enter Username" value="{{ username|default('')|e }}" required>
 
       <label for="psw"><b>Password</b></label>
       <input id="psw" name="psw" type="password" placeholder="Enter Password" required>

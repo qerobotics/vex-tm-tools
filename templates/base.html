@@ -58,7 +58,8 @@
   /* Forms: a clean, accessible set of styles used by auth pages */
   form{background:rgba(255,255,255,0.02);padding:1rem;border-radius:8px;border:1px solid rgba(255,255,255,0.03)}
   .imgcontainer{text-align:center;margin:1rem 0}
-  img.avatar{width:120px;border-radius:50%;box-shadow:0 6px 18px rgba(0,0,0,0.45)}
+  /* Larger avatar for better visibility; responsive cap applies below */
+  img.avatar{width:180px;max-width:40%;border-radius:50%;box-shadow:0 6px 28px rgba(0,0,0,0.45)}
   .container{padding:8px}
 
   input[type=text], input[type=password], input[type=email] {
@@ -75,9 +76,15 @@
 
   .muted{color:var(--muted);font-size:.95rem}
 
+  /* Alerts and messages */
+  .alert{padding:10px 12px;border-radius:6px;margin-bottom:0.75rem}
+  .alert-error{background:linear-gradient(180deg, rgba(247,118,142,0.08), rgba(247,118,142,0.04));border:1px solid rgba(247,118,142,0.12);color:var(--danger)}
+
   @media (max-width:600px){
     header ul{flex-direction:column;align-items:stretch}
     .but-row{flex-direction:column}
+    /* Smaller avatars on narrow screens */
+    img.avatar{width:120px;max-width:36%}
   }
   </style>
 
@@ -90,12 +97,20 @@
   <header>
     <nav>
       <ul>
-        <li><a href="/">Home</a></li>
+        <li>
+          <a href="{{ url_for('index') }}" class="{{ 'active' if request.path == url_for('index') else '' }}">Home</a>
+        </li>
         {% if 'UserId' in session %}
-          <li><a href="/profile">Profile</a></li>
-          <li><a href="/auth/logout">Logout</a></li>
+          <li>
+            <a href="{{ url_for('profile') }}" class="{{ 'active' if request.path == url_for('profile') else '' }}">Profile</a>
+          </li>
+          <li>
+            <a href="{{ url_for('logout') }}" class="{{ 'active' if request.path == url_for('logout') else '' }}">Logout</a>
+          </li>
         {% else %}
-          <li><a href="/auth/login">Login</a></li>
+          <li>
+            <a href="{{ url_for('login') }}" class="{{ 'active' if request.path == url_for('login') else '' }}">Login</a>
+          </li>
         {% endif %}
       </ul>
     </nav>

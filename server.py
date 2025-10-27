@@ -14,8 +14,7 @@ userManager = UM.UserManager()
 userInfo = None
 userName = None
 
-
-# Home page: render the index template that extends base.html
+# Home page
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -45,7 +44,10 @@ def auth_service():
         session['role'] = userData[2]
         return redirect(url_for('index'))     
     else:   
-        return redirect(url_for('login'))
+        # On failed login, render the login page with an error message so the
+        # user sees why authentication failed and can retry without losing
+        # the entered username.
+        return render_template('login.html', error=res.get('message', 'Login failed'), username=UserId)
 @app.route('/service/auth/password',methods=['POST'])
 def change_password():
     newpassword=request.form['psw']

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Simple user avatar SVG (remix-style) created for this project -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="240" height="240" aria-hidden="true" role="img">
+  <!-- circle background -->
+  <rect width="24" height="24" rx="6" fill="#0f1724" />
+  <!-- head -->
+  <path d="M12 12a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" fill="#7aa2f7" />
+  <!-- shoulders/torso -->
+  <path d="M4 20a8 8 0 0 1 16 0v0a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v0z" fill="#9d7cd8" opacity="0.95" />
+</svg>
