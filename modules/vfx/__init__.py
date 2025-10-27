@@ -1,7 +1,7 @@
-from ...tm_manager import MatchEntity
+from ...models.events import EventEntity
 
 class LightEntity:
-    def __init__(self):
+    def __init__(self, light_id, state=0):
         self.light_id = light_id
         self.state = state
     

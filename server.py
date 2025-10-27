@@ -2,9 +2,7 @@
 from flask import Flask, session, redirect, render_template, request, url_for
 # Importing userManager
 import userManager as UM
-# Importing threading
-import threading
-# Creating an insteance of Flask
+# Creating an instance of Flask
 app = Flask(__name__)
 # Creating a secret key for session management
 app.secret_key = 'insecure_secret_key_for_session_management'
@@ -41,7 +39,10 @@ def auth_service():
         userName=UserId
         session['UserId'] = UserId
         userData = userManager.getDetails(UserId)
-        session['role'] = userData[2]
+        try:
+            session['role'] = userData[2]
+        except IndexError:
+            session['role'] = None
         return redirect(url_for('index'))     
     else:   
         # On failed login, render the login page with an error message so the

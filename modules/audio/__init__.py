@@ -1,9 +1,6 @@
-from ...tm_manager import MatchEntity
+from ...models.events import EventEntity
+from ...models.audio import SongEntity
 
-class SongEntity:
-    def __init__(self, id, start_time = 0):
-        self.id = id
-        self.start_time = start_time
 
 class AudioModule:
     def __init__(self,keys):
