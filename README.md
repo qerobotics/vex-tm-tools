@@ -1,1 +1,1 @@
-# vex-tm-manager-spotify-sync
+# VEX TM Manager Spotify Sync + Other Tools
