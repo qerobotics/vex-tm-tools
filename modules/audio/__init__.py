@@ -7,11 +7,8 @@ class AudioModule:
     def __init__(self,keys):
         self.keys = keys
 
-    def queue_song_for_match(self, song: SongEntity):
+    def queue_song_for_match(self, song: SongEntity, ):
         pass
 
     def stop_all_sound(self):
-        pass
-    
-    def background_service(self):
         pass
