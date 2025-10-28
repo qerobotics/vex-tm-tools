@@ -1,6 +1,6 @@
 # VEX TM Manager Tools
 
-This README documents the runtime architecture and the JSON-driven data flow used by this project.
+This README documents the runtime architecture used by this project.
 
 ## Overview
 
