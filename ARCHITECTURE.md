@@ -176,7 +176,7 @@ This uniform schema allows the frontend to post manual events and the websocket 
 
 ## `config.json` (editable by UI)
 
-- `config.json` holds non-sensitive runtime constants, for example:
+- `config.json` holds runtime constants, for example:
 
   {
     "tm_manager_host": "192.168.0.10",
@@ -208,9 +208,3 @@ This uniform schema allows the frontend to post manual events and the websocket 
 3. Event processor dequeues event, validates schema, determines it updates `field2.json` (state="queued", match_id=123) and writes the file.
 4. Event processor consults `actions.json` and finds a mapping for `on_state_change` `standby->queued` — triggers lighting preset "ready" and schedules a countdown audio cue via the Spotify controller.
 5. Each action is sent to the respective device driver; results are logged to `events.log`.
-
-
-## Notes
-
-- All data formats used are JSON.
-- Implementation details such as queues, drivers, and retry policies are left to the code; this README documents the intended runtime architecture and dataflow.
