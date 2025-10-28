@@ -1,10 +1,4 @@
 # VEX TM Manager Spotify Sync + Other Tools
-## Useful Resources: 
-* API Guide: https://docs.google.com/document/d/1LYMOsPlYzZF3SYyTNPe2b3fvlbFc5XvA_Dmd-JH7ieU/edit?tab=t.0
-* API Intro: https://kb.roboticseducation.org/hc/en-us/articles/19238156122135-TM-Public-API
-* FLX S48 Manual: https://support.vikinglighting.co.uk/downloads/FLX%20S%20User%20Manual%20v1.pdf
-
-
 ## What will this do?
 1. Connect to TM Manager via the TM Manager Public API and track match starts, ends, and updates to audience displays using the Field Set Websocket
 2. Connect to the Spotify API and play music in time with match starts, from a predefined list stored in a json file
@@ -13,20 +7,32 @@
 5. (Hopefully) Control the PTZ Module attatched to the camera using a micro-controller connected to a servo, such as a Raspberry Pi or Arduino (Avi's Idea)
 
 ## TM Manager Connection
+### Useful Resources
+* API Guide: https://docs.google.com/document/d/1LYMOsPlYzZF3SYyTNPe2b3fvlbFc5XvA_Dmd-JH7ieU/edit?tab=t.0
+* API Intro: https://kb.roboticseducation.org/hc/en-us/articles/19238156122135-TM-Public-API
+
 ### API Key
 ```
 waiting on this
 ```
 
 ## Spotify API
-WIP
+### Useful Resources
+* https://developer.spotify.com/documentation/web-api
+* https://spotipy.readthedocs.io/en/2.25.1/
+
+Planning on using Spotipy
 
 ## ATEM Switching
-WIP
+### Useful Resources
+* https://clvlabs.github.io/PyATEMMax/
 
 ## ZerOS Lighting Board
-### Open Sound Control (OSC)
-WIP
+### Useful Resources
+* FLX S48 Manual: https://support.vikinglighting.co.uk/downloads/FLX%20S%20User%20Manual%20v1.pdf
+* https://www.zero88.com/manuals/zeros/setup/triggers/osc
+
+Will be using Open Sound Control (OSC)
 
 ### Lighting patterns
 #### Preset Allocations
