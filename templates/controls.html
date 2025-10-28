@@ -1,0 +1,99 @@
+{% extends 'base.html' %}
+
+{% block title %}Manual Controls{% endblock %}
+
+{% block content %}
+<section>
+    <h1>Manual Controls</h1>
+    <p class="muted">Trigger actions manually. These are sent to the event queue.</p>
+    
+    <div class="controls-grid">
+        <div class="control-card">
+            <h2>Lighting</h2>
+            <label for="lighting-preset">Preset ID:</label>
+            <input type="number" id="lighting-preset" value="13">
+            <button onclick="triggerAction('lighting')">Send Lighting Action</button>
+        </div>
+
+        <div class="control-card">
+            <h2>Video</h2>
+            <label for="video-camera">Camera ID:</label>
+            <input type="number" id="video-camera" value="1">
+            <button onclick="triggerAction('video')">Send Video Action</button>
+        </div>
+
+        <div class="control-card">
+            <h2>Audio (Spotify)</h2>
+            <label for="audio-command">Command:</label>
+            <input type="text" id="audio-command" value="play">
+            <label for="audio-context">Context URI (optional):</label>
+            <input type="text" id="audio-context" placeholder="spotify:playlist:...">
+            <button onclick="triggerAction('audio')">Send Audio Action</button>
+        </div>
+        
+        <div class="control-card">
+            <h2>Manual Popup</h2>
+            <label for="popup-room">Room ID:</label>
+            <input type="text" id="popup-room" value="room1">
+            <label for="popup-message">Message:</label>
+            <input type="text" id="popup-message" value="Welcome!">
+            <button onclick="sendPopup()">Send Popup</button>
+        </div>
+    </div>
+</section>
+
+<script>
+    async function triggerAction(type) {
+        let payload = { type: type };
+        if (type === 'lighting') {
+            payload.preset_id = document.getElementById('lighting-preset').value;
+        } else if (type === 'video') {
+            payload.camera_id = document.getElementById('video-camera').value;
+        } else if (type === 'audio') {
+            payload.command = document.getElementById('audio-command').value;
+            const contextUri = document.getElementById('audio-context').value;
+            if (contextUri) {
+                payload.metadata = { context_uri: contextUri };
+            }
+        }
+
+        await fetch('/api/trigger_action', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+    }
+
+    async function sendPopup() {
+        const payload = {
+            room_id: document.getElementById('popup-room').value,
+            message: document.getElementById('popup-message').value,
+            duration: 10 // seconds
+        };
+
+        await fetch('/api/send_popup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+    }
+</script>
+
+<style>
+    .controls-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 1rem;
+    }
+    .control-card {
+        background-color: var(--color-background-secondary);
+        padding: 1rem;
+        border-radius: 8px;
+    }
+    .control-card input {
+        width: 100%;
+        padding: 0.5rem;
+        margin-bottom: 0.5rem;
+    }
+</style>
+{% endblock %}

@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+
+{% block title %}Configuration{% endblock %}
+
+{% block content %}
+<section>
+    <h1>Edit Configuration</h1>
+    <p class="muted">Edit the <code>config.json</code> file directly. Be careful with syntax.</p>
+    <form method="POST">
+        <textarea name="config" rows="30" style="width: 100%; font-family: monospace;">{{ config }}</textarea>
+        <br>
+        <button type="submit">Save Configuration</button>
+    </form>
+</section>
+{% endblock %}

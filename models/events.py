@@ -1,13 +1,11 @@
-class EventEntity:
-    def __init__(self, start_time, field=None, duration=None):
-        self.start_time = start_time
-        self.duration = duration
+from .base import BaseModel
+import uuid
+from datetime import datetime
+
+class Event(BaseModel):
+    def __init__(self, type, timestamp=None, field=None, payload=None, id=None):
+        self.id = id or str(uuid.uuid4())
+        self.type = type
+        self.timestamp = timestamp or datetime.utcnow().isoformat()
         self.field = field
-
-    def trigger_event(self):
-        pass
-
-class MatchEntity(EventEntity):
-    def __init__(self, match_id, start_time, field=None, duration=60):
-        super().__init__(start_time=start_time, field=field, duration=duration)
-        self.match_id = match_id
+        self.payload = payload or {}

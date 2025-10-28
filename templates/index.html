@@ -1,16 +1,84 @@
 {% extends 'base.html' %}
 
-{#
-  Home (index) page
-  - Extends `base.html` to inherit consolidated CSS and shared nav.
-  - Keep content minimal and commented to serve as a starting point.
-#}
-
-{% block title %}Home{% endblock %}
+{% block title %}Live Dashboard{% endblock %}
 
 {% block content %}
-  <section aria-labelledby="home-heading">
-    <h1 id="home-heading">Welcome to Vex TM Manager Tools</h1>
-    <p class="muted">Control your ATEM, Spotify, and Lighting from a single location.</p>
-  </section>
+<section aria-labelledby="dashboard-heading">
+    <h1 id="dashboard-heading">Live Field Dashboard</h1>
+    <p class="muted">Real-time status of all competition fields.</p>
+    <div id="fields-container" class="fields-grid">
+        <!-- Field status cards will be injected here by JavaScript -->
+    </div>
+</section>
+
+<script>
+    function getStatusColor(state) {
+        switch (state) {
+            case 'active':
+            case 'matchStarted':
+                return 'var(--color-success)';
+            case 'queued':
+            case 'fieldMatchAssigned':
+                return 'var(--color-warning)';
+            case 'finish':
+            case 'matchStopped':
+                return 'var(--color-info)';
+            case 'standby':
+                return 'var(--color-secondary)';
+            default:
+                return 'var(--color-muted)';
+        }
+    }
+
+    function createFieldCard(field) {
+        const card = document.createElement('div');
+        card.className = 'field-card';
+        card.id = `field-${field.field_id}`;
+        card.style.borderLeft = `5px solid ${getStatusColor(field.state)}`;
+
+        const lastUpdated = new Date(field.last_updated).toLocaleTimeString();
+
+        card.innerHTML = `
+            <h2>Field ${field.field_id}</h2>
+            <p class="state"><strong>State:</strong> ${field.state || 'N/A'}</p>
+            <p><strong>Match:</strong> ${field.match_id ? JSON.stringify(field.match_id) : 'None'}</p>
+            <p class="muted"><small>Last Updated: ${lastUpdated}</small></p>
+        `;
+        return card;
+    }
+
+    async function fetchAndUpdateStatus() {
+        try {
+            const response = await fetch('/api/status');
+            if (!response.ok) {
+                console.error('Failed to fetch status');
+                return;
+            }
+            const fields = await response.json();
+            const container = document.getElementById('fields-container');
+            
+            // Naive update: clear and redraw all. For more complex apps, diffing would be better.
+            container.innerHTML = ''; 
+
+            if (fields.length === 0) {
+                container.innerHTML = '<p>No field data available. Is the event processor running?</p>';
+            } else {
+                fields.forEach(field => {
+                    const card = createFieldCard(field);
+                    container.appendChild(card);
+                });
+            }
+        } catch (error) {
+            console.error('Error fetching or updating status:', error);
+            const container = document.getElementById('fields-container');
+            container.innerHTML = '<p class="error">Could not connect to the server to fetch status.</p>';
+        }
+    }
+
+    // Fetch status every 2 seconds
+    setInterval(fetchAndUpdateStatus, 2000);
+
+    // Initial fetch
+    document.addEventListener('DOMContentLoaded', fetchAndUpdateStatus);
+</script>
 {% endblock %}

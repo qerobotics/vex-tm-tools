@@ -114,6 +114,13 @@
         {% endif %}
       </ul>
     </nav>
+    <nav>
+      <a href="{{ url_for('index') }}">Dashboard</a> |
+      <a href="{{ url_for('config_page') }}">Configuration</a> |
+      <a href="{{ url_for('pause_controls') }}">Pause Controls</a> |
+      <a href="{{ url_for('room_management') }}">Room Management</a> |
+      <a href="{{ url_for('controls_page') }}">Manual Controls</a>
+    </nav>
   </header>
 
   <!-- Main content block: child templates should populate this -->

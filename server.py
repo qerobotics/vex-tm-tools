@@ -1,63 +1,240 @@
-# Importing Flask + Required Modules
-from flask import Flask, session, redirect, render_template, request, url_for
-# Importing userManager
-import userManager as UM
-# Creating an instance of Flask
-app = Flask(__name__)
-# Creating a secret key for session management
-app.secret_key = 'insecure_secret_key_for_session_management'
-# Creating an instance of UserManager
-userManager = UM.UserManager()
-# Setting variables
-userInfo = None
-userName = None
+from flask import Flask, render_template, jsonify, request, redirect, url_for
+import os
+import json
+import logging
+import tempfile
 
-# Home page
+from models.fields import FieldState
+from models.config import Config
+from models.events import Event
+
+# This is a placeholder for where the event queue would be shared
+# In a real app, this would be managed more robustly (e.g., via a global context or passed in)
+EVENT_QUEUE = None
+
+def set_event_queue(queue):
+    global EVENT_QUEUE
+    EVENT_QUEUE = queue
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "a_very_insecure_default_secret_key")
+
+STORAGE_PATH = 'storage'
+FIELDS_DIR = os.path.join(STORAGE_PATH, 'fields')
+CONFIG_FILE = os.path.join(STORAGE_PATH, 'config.json')
+SCHEDULED_MATCHES_FILE = os.path.join(STORAGE_PATH, 'scheduled_matches.json')
+POPUPS_FILE = os.path.join(STORAGE_PATH, 'popups.json')
+
+def _atomic_write(file_path, data):
+    try:
+        temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(file_path))
+        with os.fdopen(temp_fd, 'w') as temp_f:
+            json.dump(data, temp_f, indent=4)
+        os.rename(temp_path, file_path)
+        logger.info(f"Successfully wrote to {file_path}")
+    except Exception as e:
+        logger.error(f"Failed to atomically write to {file_path}: {e}")
+        if 'temp_path' in locals() and os.path.exists(temp_path):
+            os.remove(temp_path)
+
+def _read_json(file_path, default=None):
+    try:
+        with open(file_path, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return default
+
+def get_field_statuses():
+    """
+    Scans the fields directory and returns a list of field states.
+    """
+    statuses = []
+    if not os.path.exists(FIELDS_DIR):
+        return statuses
+
+    for filename in sorted(os.listdir(FIELDS_DIR)):
+        if filename.endswith(".json"):
+            try:
+                with open(os.path.join(FIELDS_DIR, filename), 'r') as f:
+                    data = json.load(f)
+                    # Basic validation
+                    if 'field_id' in data and 'state' in data:
+                        statuses.append(FieldState.from_dict(data))
+            except (json.JSONDecodeError, IOError) as e:
+                logger.error(f"Error reading or parsing {filename}: {e}")
+    return statuses
+
 @app.route('/')
 def index():
+    """
+    Serves the main dashboard page.
+    """
     return render_template('index.html')
 
-# Login/Logout/Profiles
-@app.route('/login')
-@app.route('/auth/login')
-def login():
-    return render_template('login.html')
-@app.route('/logout')
-@app.route('/auth/logout')
-def logout():
-    userInfo=None
-    session.pop('UserId', None)
-    return render_template('logout.html')
-@app.route('/service/auth', methods=['POST']) 
-def auth_service():
-    UserId = request.form['uname']
-    Pwd = request.form['psw']
-    print(UserId)
-    res = userManager.Auth(UserId, Pwd)
-    userInfo = res['user'] 
-    if userInfo != None:    
-        userName=UserId
-        session['UserId'] = UserId
-        userData = userManager.getDetails(UserId)
+@app.route('/api/status')
+def api_status():
+    """
+    API endpoint to get the current status of all fields.
+    """
+    field_statuses = get_field_statuses()
+    return jsonify([status.to_dict() for status in field_statuses])
+
+@app.route('/config', methods=['GET', 'POST'])
+def config_page():
+    """
+    Page for viewing and editing config.json.
+    """
+    if request.method == 'POST':
         try:
-            session['role'] = userData[2]
-        except IndexError:
-            session['role'] = None
-        return redirect(url_for('index'))     
-    else:   
-        # On failed login, render the login page with an error message so the
-        # user sees why authentication failed and can retry without losing
-        # the entered username.
-        return render_template('login.html', error=res.get('message', 'Login failed'), username=UserId)
-@app.route('/service/auth/password',methods=['POST'])
-def change_password():
-    newpassword=request.form['psw']
-    # Call the UserManager.changePassword method (camelCase in userManager)
-    userManager.changePassword(session['UserId'], newpassword)
-    return redirect('/')
-@app.route('/profile')
-def profile():
-    return render_template('editPwd.html')
+            new_config_str = request.form['config']
+            new_config_data = json.loads(new_config_str)
+            _atomic_write(CONFIG_FILE, new_config_data)
+            return redirect(url_for('config_page'))
+        except json.JSONDecodeError:
+            return "Invalid JSON provided", 400
+        except Exception as e:
+            logger.error(f"Error saving config: {e}")
+            return "Error saving configuration", 500
+
+    config_data = _read_json(CONFIG_FILE, default={})
+    return render_template('config.html', config=json.dumps(config_data, indent=4))
+
+@app.route('/pause', methods=['GET', 'POST'])
+def pause_controls():
+    """
+    Page for pausing/resuming action categories.
+    """
+    config_data = _read_json(CONFIG_FILE, default={})
+    config = Config.from_dict(config_data)
+
+    if request.method == 'POST':
+        # Update paused state from form data
+        config.paused['audio'] = 'audio' in request.form
+        config.paused['video'] = 'video' in request.form
+        config.paused['lighting'] = 'lighting' in request.form
+        
+        _atomic_write(CONFIG_FILE, config.to_dict())
+        return redirect(url_for('pause_controls'))
+
+    return render_template('pause.html', paused=config.paused)
+
+@app.route('/admin/rooms', methods=['GET'])
+def room_management():
+    """
+    Admin page for managing rooms.
+    """
+    config_data = _read_json(CONFIG_FILE, default={})
+    rooms = config_data.get("rooms", {})
+    return render_template('room_management.html', rooms=rooms)
+
+@app.route('/admin/rooms/add', methods=['POST'])
+def add_room():
+    """
+    Adds a new room to the configuration.
+    """
+    config_data = _read_json(CONFIG_FILE, default={})
+    if "rooms" not in config_data:
+        config_data["rooms"] = {}
+
+    room_id = request.form['room_id']
+    if room_id in config_data["rooms"]:
+        # Handle error, room already exists
+        return "Room ID already exists", 400
+
+    teams = [team.strip() for team in request.form.get('teams', '').split(',') if team.strip()]
+    config_data["rooms"][room_id] = {
+        "youtube_stream_url": request.form['youtube_stream_url'],
+        "teams": teams
+    }
+    
+    _atomic_write(CONFIG_FILE, config_data)
+    return redirect(url_for('room_management'))
+
+@app.route('/admin/rooms/edit/<room_id>', methods=['GET', 'POST'])
+def edit_room(room_id):
+    """
+    Edits an existing room.
+    """
+    config_data = _read_json(CONFIG_FILE, default={})
+    room = config_data.get("rooms", {}).get(room_id)
+    if not room:
+        return "Room not found", 404
+
+    if request.method == 'POST':
+        teams = [team.strip() for team in request.form.get('teams', '').split(',') if team.strip()]
+        config_data["rooms"][room_id]['youtube_stream_url'] = request.form['youtube_stream_url']
+        config_data["rooms"][room_id]['teams'] = teams
+        _atomic_write(CONFIG_FILE, config_data)
+        return redirect(url_for('room_management'))
+
+    return render_template('edit_room.html', room_id=room_id, room=room)
+
+@app.route('/admin/rooms/delete/<room_id>', methods=['POST'])
+def delete_room(room_id):
+    """
+    Deletes a room.
+    """
+    config_data = _read_json(CONFIG_FILE, default={})
+    if "rooms" in config_data and room_id in config_data["rooms"]:
+        del config_data["rooms"][room_id]
+        _atomic_write(CONFIG_FILE, config_data)
+    
+    return redirect(url_for('room_management'))
+
+@app.route('/controls')
+def controls_page():
+    """
+    Page for manual controls.
+    """
+    return render_template('controls.html')
+
+@app.route('/room/<room_id>')
+def room_page(room_id):
+    """
+    Public page for a specific room.
+    """
+    config_data = _read_json(CONFIG_FILE, default={})
+    room_info = config_data.get("rooms", {}).get(room_id)
+    if not room_info:
+        return "Room not found", 404
+    return render_template('room.html', room_id=room_id, room_info=room_info)
+
+@app.route('/api/scheduled_matches')
+def api_scheduled_matches():
+    return jsonify(_read_json(SCHEDULED_MATCHES_FILE, default={}))
+
+@app.route('/api/popups')
+def api_popups():
+    return jsonify(_read_json(POPUPS_FILE, default=[]))
+
+@app.route('/api/send_popup', methods=['POST'])
+def api_send_popup():
+    if not EVENT_QUEUE:
+        return jsonify({"error": "Event queue not available"}), 500
+    
+    data = request.json
+    popup_event = Event(type="manual_popup", payload=data)
+    EVENT_QUEUE.put_nowait(popup_event)
+    return jsonify({"status": "ok"})
+
+@app.route('/api/trigger_action', methods=['POST'])
+def api_trigger_action():
+    if not EVENT_QUEUE:
+        return jsonify({"error": "Event queue not available"}), 500
+        
+    data = request.json
+    # This is a simplified way to inject manual actions.
+    # We wrap it in a generic "manual_action" event type.
+    action_event = Event(type="manual_action", payload=data)
+    EVENT_QUEUE.put_nowait(action_event)
+    return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    # The app should be run with a production-ready WSGI server like Gunicorn
+    # For development, we can use app.run, but let's make it listen on all interfaces
+    # to be accessible from outside the container.
+    app.run(host='0.0.0.0', port=5000, debug=True)

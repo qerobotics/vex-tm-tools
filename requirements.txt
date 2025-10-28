@@ -1,2 +1,8 @@
 Werkzeug>=2.0
 Flask>=2.0
+websockets>=10.0
+requests>=2.20
+spotipy>=2.23
+PyATEMMax>=0.10
+python-osc>=1.8
+aiohttp>=3.8
