@@ -4,13 +4,16 @@ This README documents the runtime architecture and the JSON-driven data flow use
 
 ## Overview
 
-The application runs three main concurrent threads (or worker processes) that cooperate via a single event queue and a set of JSON files used as the persistent configuration/state store.
+The application runs five main concurrent threads (or worker processes) that cooperate via a single event queue and a set of JSON files used as the persistent configuration/state store.
+
 
 Threads:
 
 1. Frontend / UI thread
 2. Event processor (worker) that reads events from the queue
-3. Websocket connector that subscribes to the VEX/TM Manager API and dumps incoming events into the queue
+3. Schedule fetcher thread (fetches match schedule and persists it locally)
+4. Match scheduler thread (reads local schedule and enqueues timed "match_scheduled" events)
+5. Websocket connector that subscribes to the VEX/TM Manager API and dumps incoming events into the queue
 
 
 ## Shared components
@@ -20,6 +23,8 @@ Threads:
   - `fieldX.json` — per-field state files (one file per field; e.g., `field1.json`, `field2.json`, ...). Each contains the canonical state for that field (queued, countdown, active, finish, timestamps, current match id, etc.).
   - `actions.json` — mapping of event types and field state transitions to actions. Actions can define lighting, video, audio commands (referenced by name/ID) to be executed when triggered.
   - `config.json` — constants and global configuration editable by the frontend (device IPs, mappings like field->camera, spotify device id, websocket endpoints, and other non-secret runtime constants).
+  - `schedule.json` — the raw match schedule fetched from an external source by the schedule fetcher thread. This will be updated periodically and written atomically.
+  - `scheduled_matches.json` — a derived, time-indexed view (or subset) of the schedule that the match scheduler will write when matches become imminent; this file will be consumed by the frontend API to drive room pop-ups and display pages.
 
 All state and configuration uses plain JSON files. The system reads and writes these files atomically (e.g., write to a temp file and rename) to avoid corruption.
 
@@ -64,10 +69,18 @@ All state and configuration uses plain JSON files. The system reads and writes t
   - Provide manual controls to trigger actions (lighting presets, camera switches, audio cues). Manual triggers typically post a structured JSON event into the event queue so the event processor handles execution and keeps canonical state in sync.
   - Provide a dedicated "Pause" page in the UI that exposes toggles to pause/resume each category of automated actions: video, audio, and lighting. Toggling a pause will update `config.json` (atomically) with the new pause state for the relevant category, which persists across restarts and is visible to all components.
   - Show the event queue status (optional): recent events received and their processing state.
+  - Public room page: add a new page accessible without login where an operator (or audience member) can enter a room number. This page will:
+    - Display the room's configured YouTube live stream embed.
+    - Subscribe (via polling or SSE/websocket) to the scheduled matches API and show lightweight pop-ups/notifications when a team assigned to that room has a scheduled match that is imminent.
+    - Not require authentication; room access will be guarded only by the room number entry.
+  - Admin room management page: add an admin-only UI where administrators can add rooms, assign a YouTube stream URL to a room, and edit the list of teams assigned to each room. Changes will be written to `config.json` (or a small `rooms.json` if preferred) and will take effect immediately.
 
 Notes:
 - When a user applies a manual action via the primary controls, the frontend should normally post a structured JSON event to the queue (same schema as events from the websocket connector) so the event processor handles execution and canonical state updates.
 - The "Pause" toggles update `config.json`. The event processor MUST consult `config.json` immediately before executing any mapped action and must skip or short-circuit actions for categories that are currently paused. This ensures manual pauses via the UI are honored by automated processing.
+
+- API surface for schedule display:
+  - The server will expose a small read-only API endpoint (for example, `/api/scheduled_matches`) which will serve the contents of `scheduled_matches.json`. The frontend's public room page will use this endpoint to detect upcoming matches and fire pop-ups for the relevant room.
 
 
 2) Event processor thread
@@ -85,6 +98,8 @@ Notes:
   - The processor should decide whether an event requires both state update and actions, only a state update, or only an action. This decision is driven by the event type and the mappings in `actions.json`.
   - Log the result of processing and persist minimal audit info (e.g., append to a rolling `events.log` file).
 
+  - Special handling for scheduler events: when the processor receives a `match_scheduled` event (enqueued by the Match scheduler thread), it will translate that into an update of `scheduled_matches.json` (or another display file). That file will be written atomically and will be served by the Flask web server API for the room page to consume. This processing path will ensure the event queue → processor → display JSON workflow is used for scheduled-match notifications.
+
 Behavior contract for the processor:
 - Read event E from queue.
 - Validate E (schema/type). If invalid, log and drop (or push to a dead-letter queue if implemented).
@@ -95,8 +110,19 @@ Behavior contract for the processor:
 - For each configured action, send the command to the appropriate device driver/module, if the action is enabled in `config.json` and log the outcome.
 - Report success/failure per action and optionally retry transient failures.
 
+3) Schedule fetcher thread
+- Periodically fetch the official match schedule from an external API (or a configured source) and write it to `schedule.json` atomically. Responsibilities:
+  - Authenticate and fetch schedule data on a configurable interval.
+  - Normalize and validate the fetched schedule into a predictable JSON shape and persist to `schedule.json`.
+  - Optionally keep a raw copy or timestamped backups for debugging/replay.
 
-3) Websocket connector thread
+4) Match scheduler thread
+- Read `schedule.json`, watch the local system clock, and enqueue `match_scheduled` events into the central event queue when a match is scheduled (according to configurable lead times). Responsibilities:
+  - Load the schedule (and watch for updates) and compute upcoming notifications.
+  - When a match reaches its configured notification time window, create a normalized `Event` of type `match_scheduled` (including match id, teams, scheduled time, and room assignments) and push it into the event queue for processing.
+  - Handle clock drift and missed windows (idempotency) to avoid duplicate enqueues for the same scheduled match.
+
+5) Websocket connector thread
 - Connects to TM Manager / VEX API websocket(s) and writes every received event into the shared queue.
 - Responsibilities:
   - Establish and maintain websocket(s) to the VEX API (handle reconnect/backoff).
