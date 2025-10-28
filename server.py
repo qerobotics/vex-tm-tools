@@ -1,12 +1,14 @@
-from flask import Flask, render_template, jsonify, request, redirect, url_for
+from flask import Flask, render_template, jsonify, request, redirect, url_for, session, flash, g
 import os
 import json
 import logging
 import tempfile
+from functools import wraps
 
 from models.fields import FieldState
 from models.config import Config
 from models.events import Event
+from userManager import UserManager
 
 # This is a placeholder for where the event queue would be shared
 # In a real app, this would be managed more robustly (e.g., via a global context or passed in)
@@ -22,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "a_very_insecure_default_secret_key")
+
+userManager = UserManager()
 
 STORAGE_PATH = 'storage'
 FIELDS_DIR = os.path.join(STORAGE_PATH, 'fields')
@@ -40,6 +44,22 @@ def _atomic_write(file_path, data):
         logger.error(f"Failed to atomically write to {file_path}: {e}")
         if 'temp_path' in locals() and os.path.exists(temp_path):
             os.remove(temp_path)
+
+def login_required(role="ANY"):
+    def wrapper(fn):
+        @wraps(fn)
+        def decorated_view(*args, **kwargs):
+            if 'user' not in session:
+                flash("You must be logged in to view this page.", "danger")
+                return redirect(url_for('login', next=request.url))
+            
+            user_role = session.get('user', {}).get('role')
+            if role != "ANY" and user_role != role:
+                flash("You do not have permission to view this page.", "danger")
+                return redirect(url_for('index'))
+            return fn(*args, **kwargs)
+        return decorated_view
+    return wrapper
 
 def _read_json(file_path, default=None):
     try:
@@ -68,6 +88,12 @@ def get_field_statuses():
                 logger.error(f"Error reading or parsing {filename}: {e}")
     return statuses
 
+@app.before_request
+def before_request():
+    g.user = None
+    if 'user' in session:
+        g.user = session['user']
+
 @app.route('/')
 def index():
     """
@@ -83,7 +109,31 @@ def api_status():
     field_statuses = get_field_statuses()
     return jsonify([status.to_dict() for status in field_statuses])
 
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        auth_result = userManager.Auth(username, password)
+        
+        if auth_result['user']:
+            session['user'] = auth_result['user'].__dict__
+            flash('Logged in successfully.', 'success')
+            next_page = request.args.get('next')
+            return redirect(next_page or url_for('index'))
+        else:
+            flash(auth_result['message'], 'danger')
+    
+    return render_template('login.html')
+
+@app.route('/logout')
+def logout():
+    session.pop('user', None)
+    flash('You have been logged out.', 'info')
+    return redirect(url_for('index'))
+
 @app.route('/config', methods=['GET', 'POST'])
+@login_required(role="admin")
 def config_page():
     """
     Page for viewing and editing config.json.
@@ -104,6 +154,7 @@ def config_page():
     return render_template('config.html', config=json.dumps(config_data, indent=4))
 
 @app.route('/pause', methods=['GET', 'POST'])
+@login_required(role="admin")
 def pause_controls():
     """
     Page for pausing/resuming action categories.
@@ -123,6 +174,7 @@ def pause_controls():
     return render_template('pause.html', paused=config.paused)
 
 @app.route('/admin/rooms', methods=['GET'])
+@login_required(role="admin")
 def room_management():
     """
     Admin page for managing rooms.
@@ -132,6 +184,7 @@ def room_management():
     return render_template('room_management.html', rooms=rooms)
 
 @app.route('/admin/rooms/add', methods=['POST'])
+@login_required(role="admin")
 def add_room():
     """
     Adds a new room to the configuration.
@@ -155,6 +208,7 @@ def add_room():
     return redirect(url_for('room_management'))
 
 @app.route('/admin/rooms/edit/<room_id>', methods=['GET', 'POST'])
+@login_required(role="admin")
 def edit_room(room_id):
     """
     Edits an existing room.
@@ -174,6 +228,7 @@ def edit_room(room_id):
     return render_template('edit_room.html', room_id=room_id, room=room)
 
 @app.route('/admin/rooms/delete/<room_id>', methods=['POST'])
+@login_required(role="admin")
 def delete_room(room_id):
     """
     Deletes a room.
@@ -186,6 +241,7 @@ def delete_room(room_id):
     return redirect(url_for('room_management'))
 
 @app.route('/controls')
+@login_required()
 def controls_page():
     """
     Page for manual controls.
@@ -212,6 +268,7 @@ def api_popups():
     return jsonify(_read_json(POPUPS_FILE, default=[]))
 
 @app.route('/api/send_popup', methods=['POST'])
+@login_required()
 def api_send_popup():
     if not EVENT_QUEUE:
         return jsonify({"error": "Event queue not available"}), 500
@@ -222,6 +279,7 @@ def api_send_popup():
     return jsonify({"status": "ok"})
 
 @app.route('/api/trigger_action', methods=['POST'])
+@login_required()
 def api_trigger_action():
     if not EVENT_QUEUE:
         return jsonify({"error": "Event queue not available"}), 500
@@ -232,6 +290,37 @@ def api_trigger_action():
     action_event = Event(type="manual_action", payload=data)
     EVENT_QUEUE.put_nowait(action_event)
     return jsonify({"status": "ok"})
+
+@app.route('/editPwd', methods=['GET', 'POST'])
+@login_required()
+def edit_password():
+    if request.method == 'POST':
+        current_password = request.form['current_password']
+        new_password = request.form['new_password']
+        confirm_password = request.form['confirm_password']
+        
+        if new_password != confirm_password:
+            flash('New passwords do not match.', 'danger')
+            return redirect(url_for('edit_password'))
+
+        username = session['user']['userName']
+        
+        # Verify current password
+        auth_result = userManager.Auth(username, current_password)
+        if not auth_result['user']:
+            flash('Incorrect current password.', 'danger')
+            return redirect(url_for('edit_password'))
+
+        # Change password
+        try:
+            userManager.ChangePassword(username, new_password)
+            flash('Password updated successfully.', 'success')
+            return redirect(url_for('index'))
+        except Exception as e:
+            flash(f'An error occurred: {e}', 'danger')
+
+    return render_template('editPwd.html')
+
 
 if __name__ == "__main__":
     # The app should be run with a production-ready WSGI server like Gunicorn
