@@ -25,6 +25,7 @@ Threads:
   - `config.json` — constants and global configuration editable by the frontend (device IPs, mappings like field->camera, spotify device id, websocket endpoints, and other non-secret runtime constants).
   - `schedule.json` — the raw match schedule fetched from an external source by the schedule fetcher thread. This will be updated periodically and written atomically.
   - `scheduled_matches.json` — a derived, time-indexed view (or subset) of the schedule that the match scheduler will write when matches become imminent; this file will be consumed by the frontend API to drive room pop-ups and display pages.
+  - `popups.json` — a short-lived list of active manual or system-generated pop-ups for rooms (message, room id, start, end, priority). The event processor will write this file atomically when it processes `manual_popup` events or other popup-producing events.
 
 All state and configuration uses plain JSON files. The system reads and writes these files atomically (e.g., write to a temp file and rename) to avoid corruption.
 
@@ -74,6 +75,7 @@ All state and configuration uses plain JSON files. The system reads and writes t
     - Subscribe (via polling or SSE/websocket) to the scheduled matches API and show lightweight pop-ups/notifications when a team assigned to that room has a scheduled match that is imminent.
     - Not require authentication; room access will be guarded only by the room number entry.
   - Admin room management page: add an admin-only UI where administrators can add rooms, assign a YouTube stream URL to a room, and edit the list of teams assigned to each room. Changes will be written to `config.json` (or a small `rooms.json` if preferred) and will take effect immediately.
+  - Manual pop-ups UI: add a small admin/operator page to compose and send immediate pop-ups to a specific room. The form will include: room id, message/title, optional attached team or match id, duration (seconds), and priority. Submitting the form will POST to a server API (for example, `/api/send_popup`) which will create a normalized `Event` of type `manual_popup` and push it into the central event queue. The event processor will handle these events and write `popups.json` so room pages receive the notification.
 
 Notes:
 - When a user applies a manual action via the primary controls, the frontend should normally post a structured JSON event to the queue (same schema as events from the websocket connector) so the event processor handles execution and canonical state updates.
@@ -81,6 +83,7 @@ Notes:
 
 - API surface for schedule display:
   - The server will expose a small read-only API endpoint (for example, `/api/scheduled_matches`) which will serve the contents of `scheduled_matches.json`. The frontend's public room page will use this endpoint to detect upcoming matches and fire pop-ups for the relevant room.
+  - The server will also expose a small read-only endpoint (for example, `/api/popups`) which will serve `popups.json` for the public room page to consume in near-real-time (polling or SSE). The `/api/send_popup` POST endpoint will accept manual pop-up requests from the admin/operator UI, validate them, and enqueue a `manual_popup` event.
 
 
 2) Event processor thread
@@ -99,6 +102,8 @@ Notes:
   - Log the result of processing and persist minimal audit info (e.g., append to a rolling `events.log` file).
 
   - Special handling for scheduler events: when the processor receives a `match_scheduled` event (enqueued by the Match scheduler thread), it will translate that into an update of `scheduled_matches.json` (or another display file). That file will be written atomically and will be served by the Flask web server API for the room page to consume. This processing path will ensure the event queue → processor → display JSON workflow is used for scheduled-match notifications.
+
+  - Special handling for manual pop-ups: when the processor receives a `manual_popup` event (originating from the admin/operator UI via `/api/send_popup`, or other sources), it will validate the payload and append or update an entry in `popups.json`. `popups.json` will hold active pop-ups (start/end timestamps) and will be served by `/api/popups` for room pages to display immediate notifications. Pop-ups will be short-lived; the processor will also periodically garbage-collect expired pop-ups or mark them as expired in the file.
 
 Behavior contract for the processor:
 - Read event E from queue.
@@ -121,6 +126,8 @@ Behavior contract for the processor:
   - Load the schedule (and watch for updates) and compute upcoming notifications.
   - When a match reaches its configured notification time window, create a normalized `Event` of type `match_scheduled` (including match id, teams, scheduled time, and room assignments) and push it into the event queue for processing.
   - Handle clock drift and missed windows (idempotency) to avoid duplicate enqueues for the same scheduled match.
+    - The match scheduler will compute the notification time by subtracting a configurable lead time (X minutes) from the scheduled match time and will enqueue the `match_scheduled` event when the local clock reaches that notification time. The lead time (for example `schedule_lead_minutes`) will be read from `config.json` (or a runtime-config snapshot) so operators can adjust how early notifications are emitted.
+    - The scheduler will ensure idempotency by marking or remembering which matches have already had a `match_scheduled` event emitted for a given schedule version/timestamp so it will not re-enqueue duplicates if the schedule file is reloaded.
 
 5) Websocket connector thread
 - Connects to TM Manager / VEX API websocket(s) and writes every received event into the shared queue.
@@ -182,7 +189,8 @@ This uniform schema allows the frontend to post manual events and the websocket 
     "tm_manager_host": "192.168.0.10",
     "fields": ["field1","field2","field3"],
     "field_camera_map": {"field1":"cam1","field2":"cam2","field3":"cam3"},
-    "spotify_device_id": "my_spotify_device"
+    "spotify_device_id": "my_spotify_device",
+    "schedule_lead_minutes": 5
   }
 
 - The frontend allows editing this file; changes are written atomically and take effect immediately for subsequent events.
