@@ -31,6 +31,7 @@ Planning on using Spotipy
 ### Useful Resources
 * FLX S48 Manual: https://support.vikinglighting.co.uk/downloads/FLX%20S%20User%20Manual%20v1.pdf
 * https://www.zero88.com/manuals/zeros/setup/triggers/osc
+* https://python-osc.readthedocs.io/en/latest/
 
 Will be using Open Sound Control (OSC)
 
