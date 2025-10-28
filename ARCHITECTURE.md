@@ -45,6 +45,7 @@ All state and configuration uses plain JSON files. The system reads and writes t
     - `Action` objects (and their concrete subclasses) will be the unit the processor sends to device controller modules. Controller modules will prefer typed `Action` subclasses over raw JSON for clarity and type safety.
   - `ActionMapping` — will represent mappings loaded from `actions.json` (for example: on_event or on_state_change entries). `ActionMapping` objects will be used by the processor to translate `Event` or `FieldState` transitions into zero or more `Action` instances.
   - `Config` — will represent values in `config.json` (device addresses, field->camera map, paused categories). `Config` will be reloaded on change and keyed by a version or timestamp so the processor can make decisions against a consistent snapshot.
+  - `Config` — will represent values in `config.json` (device addresses, field->camera map, paused categories). `Config` will be reloaded on change and keyed by a version or timestamp so the processor can make decisions against a consistent snapshot. It will also include schedule-related controls such as `schedule_lead_matches` and a `match_queue_pause` object with `start` and `end` ISO-8601 timestamps for temporary suspensions of match-queue notifications.
   - `AuditEntry` — will represent a minimal runtime log entry written to `events.log` for processed events and action outcomes.
 
 - Implementation notes and contracts:
@@ -102,6 +103,7 @@ Notes:
   - Log the result of processing and persist minimal audit info (e.g., append to a rolling `events.log` file).
 
   - Special handling for scheduler events: when the processor receives a `match_scheduled` event (enqueued by the Match scheduler thread), it will translate that into an update of `scheduled_matches.json` (or another display file). That file will be written atomically and will be served by the Flask web server API for the room page to consume. This processing path will ensure the event queue → processor → display JSON workflow is used for scheduled-match notifications.
+  - The processor will consult `config.json` for an active `match_queue_pause` window and, if a pause is in effect, will short-circuit updates to `scheduled_matches.json` (or defer processing) until the pause window ends. This ensures operator-configured quiet periods will suppress match notifications end-to-end.
 
   - Special handling for manual pop-ups: when the processor receives a `manual_popup` event (originating from the admin/operator UI via `/api/send_popup`, or other sources), it will validate the payload and append or update an entry in `popups.json`. `popups.json` will hold active pop-ups (start/end timestamps) and will be served by `/api/popups` for room pages to display immediate notifications. Pop-ups will be short-lived; the processor will also periodically garbage-collect expired pop-ups or mark them as expired in the file.
 
@@ -122,12 +124,14 @@ Behavior contract for the processor:
   - Optionally keep a raw copy or timestamped backups for debugging/replay.
 
 4) Match scheduler thread
-- Read `schedule.json`, watch the local system clock, and enqueue `match_scheduled` events into the central event queue when a match is scheduled (according to configurable lead times). Responsibilities:
-  - Load the schedule (and watch for updates) and compute upcoming notifications.
-  - When a match reaches its configured notification time window, create a normalized `Event` of type `match_scheduled` (including match id, teams, scheduled time, and room assignments) and push it into the event queue for processing.
-  - Handle clock drift and missed windows (idempotency) to avoid duplicate enqueues for the same scheduled match.
-    - The match scheduler will compute the notification time by subtracting a configurable lead time (X minutes) from the scheduled match time and will enqueue the `match_scheduled` event when the local clock reaches that notification time. The lead time (for example `schedule_lead_minutes`) will be read from `config.json` (or a runtime-config snapshot) so operators can adjust how early notifications are emitted.
-    - The scheduler will ensure idempotency by marking or remembering which matches have already had a `match_scheduled` event emitted for a given schedule version/timestamp so it will not re-enqueue duplicates if the schedule file is reloaded.
+- Read `schedule.json` and enqueue `match_scheduled` events into the central event queue when a match reaches a configured notification threshold expressed in matches (not minutes). Responsibilities:
+  - Load the schedule (and watch for updates) and compute upcoming notifications based on schedule ordering.
+  - When a match becomes N matches away in the schedule (for example, `schedule_lead_matches = 5`), create a normalized `Event` of type `match_scheduled` (including match id, teams, scheduled time, and room assignments) and push it into the event queue for processing.
+  - Handle schedule updates and missed windows (idempotency) to avoid duplicate enqueues for the same scheduled match.
+  - Before enqueuing a `match_scheduled` event, the Match scheduler will consult `config.json` for a `match_queue_pause` window. If the current time falls within an active pause window, the scheduler will defer enqueuing until the pause window ends (or the schedule is updated) to avoid emitting notifications during operator-configured quiet periods.
+    - The match scheduler will compute the notification condition by counting matches in the schedule: when the configured `schedule_lead_matches` count is reached for a particular team/room, it will emit the `match_scheduled` event. This makes notifications relative to match ordering rather than wall-clock time.
+    - The scheduler will read `schedule_lead_matches` from `config.json` (or a runtime-config snapshot) so operators can adjust how early notifications are emitted in terms of matches remaining.
+    - The scheduler will ensure idempotency by marking or remembering which matches have already had a `match_scheduled` event emitted for a given schedule version/timestamp so it will not re-enqueue duplicates if the schedule file is reloaded or the order changes.
 
 5) Websocket connector thread
 - Connects to TM Manager / VEX API websocket(s) and writes every received event into the shared queue.
@@ -190,7 +194,11 @@ This uniform schema allows the frontend to post manual events and the websocket 
     "fields": ["field1","field2","field3"],
     "field_camera_map": {"field1":"cam1","field2":"cam2","field3":"cam3"},
     "spotify_device_id": "my_spotify_device",
-    "schedule_lead_minutes": 5
+    "schedule_lead_matches": 5,
+    "match_queue_pause": {
+      "start": null,
+      "end": null
+    }
   }
 
 - The frontend allows editing this file; changes are written atomically and take effect immediately for subsequent events.
