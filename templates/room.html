@@ -1,32 +1,87 @@
 {% extends 'base.html' %}
 
+{% block body_class %}full-width-video-page{% endblock %}
+
 {% block title %}Room {{ room_id }}{% endblock %}
 
 {% block content %}
-<section>
-    <h1>Welcome to Room {{ room_id }}</h1>
-    <p class="muted">Team(s): {{ room_info.teams | join(', ') }}</p>
+<section class="room-section">
+    <div class="room-header">
+        <h1>Welcome to Room {{ room_id }}</h1>
+        <p class="muted">Team(s): {{ room_info.teams | join(', ') }}</p>
+    </div>
 
-    {% if room_info.youtube_embed_url %}
+    {% if room_info.youtube_stream_url %}
     <div class="video-container">
-        <iframe width="100%" height="500" src="{{ room_info.youtube_embed_url }}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+        <iframe width="1431" height="805" src="{{ room_info.youtube_stream_url }}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
     </div>
     {% endif %}
 
-    <div id="popup-container" class="popup"></div>
+    <div id="modal-container" class="modal-backdrop">
+        <div class="modal-content">
+            <p id="modal-message"></p>
+            <button id="modal-dismiss-btn" class="btn btn-primary">Dismiss</button>
+        </div>
+    </div>
 </section>
 
 <script>
     const ROOM_ID = "{{ room_id }}";
     const TEAMS_IN_ROOM = {{ room_info.teams | tojson | safe }};
+    let popupTimeout;
+    let currentPopupId = null;
 
-    function showPopup(message, duration = 10) {
-        const container = document.getElementById('popup-container');
-        container.innerText = message;
-        container.style.display = 'block';
-        setTimeout(() => {
-            container.style.display = 'none';
-        }, duration * 1000);
+    function showPopup(message, duration = 10, popupId) {
+        console.log(`Showing popup: id=${popupId}, message=${message}, duration=${duration}`);
+        const modal = document.getElementById('modal-container');
+        const messageEl = document.getElementById('modal-message');
+        const dismissBtn = document.getElementById('modal-dismiss-btn');
+
+        currentPopupId = popupId;
+
+        // Clear any existing timer to prevent conflicts
+        if (popupTimeout) {
+            clearTimeout(popupTimeout);
+        }
+
+        messageEl.innerText = message;
+        modal.style.display = 'flex';
+
+        const hideModal = () => {
+            modal.style.display = 'none';
+            if (popupTimeout) {
+                clearTimeout(popupTimeout);
+            }
+            if (currentPopupId) {
+                console.log(`Dismissing popup via UI: id=${currentPopupId}`);
+                dismissPopup(currentPopupId);
+                currentPopupId = null; // Prevent re-dismissal
+            }
+        };
+
+        dismissBtn.onclick = hideModal;
+
+        popupTimeout = setTimeout(hideModal, duration * 1000);
+    }
+
+    async function dismissPopup(popupId) {
+        console.log(`Sending dismiss request to server for popup_id: ${popupId}`);
+        try {
+            const response = await fetch('/api/popups/dismiss', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ popup_id: popupId }),
+            });
+            if (response.ok) {
+                console.log(`Successfully dismissed popup_id: ${popupId}`);
+            } else {
+                console.error(`Failed to dismiss popup_id: ${popupId}`, await response.json());
+            }
+        } catch (error) {
+            console.error('Failed to send dismiss request:', error);
+        }
     }
 
     async function checkScheduledMatches() {
@@ -40,13 +95,23 @@
     }
 
     async function checkManualPopups() {
+        console.log("Checking for manual popups...");
         const response = await fetch('/api/popups');
         const popups = await response.json();
+        console.log("Received popups:", popups);
         
         const roomPopup = popups.find(p => p.room_id === ROOM_ID);
         if (roomPopup) {
-            showPopup(roomPopup.message, roomPopup.duration);
-            // A real implementation would need a way to clear this popup
+            console.log(`Found popup for this room:`, roomPopup);
+            // Only show if it's not the one we are currently showing
+            if (roomPopup.popup_id !== currentPopupId) {
+                console.log(`New popup found (current: ${currentPopupId}, new: ${roomPopup.popup_id}). Showing it.`);
+                showPopup(roomPopup.message, roomPopup.duration, roomPopup.popup_id);
+            } else {
+                console.log(`Popup ${roomPopup.popup_id} is already being displayed.`);
+            }
+        } else {
+            console.log("No popups for this room.");
         }
     }
 
@@ -55,21 +120,68 @@
 </script>
 
 <style>
-    .video-container {
-        margin-bottom: 1rem;
-    }
-    .popup {
+    .full-width-video-page header {
         display: none;
-        position: fixed;
-        bottom: 20px;
-        left: 50%;
-        transform: translateX(-50%);
-        background-color: var(--color-warning);
-        color: black;
-        padding: 1rem 2rem;
+    }
+    .full-width-video-page main {
+        max-width: none;
+        margin: 0;
+        padding: 0;
+    }
+    .room-section {
+        width: 100%;
+    }
+    .room-header {
+        padding: 0 1rem;
+        margin-bottom: 1rem;
+        position: absolute;
+        top: 1rem;
+        left: 1rem;
+        z-index: 10;
+        background: rgba(0,0,0,0.5);
+        padding: 0.5rem 1rem;
         border-radius: 8px;
-        font-size: 1.5rem;
+    }
+    .room-header h1, .room-header p {
+        color: white;
+        text-shadow: 1px 1px 2px black;
+    }
+    .video-container {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+    }
+    .video-container iframe {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+    }
+    .modal-backdrop {
+        display: none; /* Hidden by default */
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.6);
         z-index: 1000;
+        justify-content: center;
+        align-items: center;
+    }
+    .modal-content {
+        background-color: var(--color-background);
+        color: var(--color-text);
+        padding: 2rem 3rem;
+        border-radius: 8px;
+        text-align: center;
+        max-width: 500px;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    }
+    .modal-content p {
+        font-size: 1.5rem;
+        margin-bottom: 1.5rem;
     }
 </style>
 {% endblock %}

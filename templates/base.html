@@ -89,7 +89,7 @@
   </style>
 
 </head>
-<body>
+<body class="{% block body_class %}{% endblock %}">
   <!--
     Site header shared by all pages. It uses `session` to show auth links.
     Keep markup minimal; presentation is handled by the consolidated CSS above.
@@ -100,7 +100,19 @@
         <li>
           <a href="{{ url_for('index') }}" class="{{ 'active' if request.path == url_for('index') else '' }}">Home</a>
         </li>
-        {% if 'UserId' in session %}
+        {% if 'user' in session %}
+          <li>
+            <a href="{{ url_for('config_page') }}" class="{{ 'active' if request.path == url_for('config_page') else '' }}">Configuration</a>
+          </li>
+          <li>
+            <a href="{{ url_for('pause_controls') }}" class="{{ 'active' if request.path == url_for('pause_controls') else '' }}">Pause Controls</a>
+          </li>
+          <li>
+            <a href="{{ url_for('room_management') }}" class="{{ 'active' if request.path == url_for('room_management') else '' }}">Room Management</a>
+          </li>
+          <li>
+            <a href="{{ url_for('controls_page') }}" class="{{ 'active' if request.path == url_for('controls_page') else '' }}">Manual Controls</a>
+          </li>
           <li>
             <a href="{{ url_for('profile') }}" class="{{ 'active' if request.path == url_for('profile') else '' }}">Profile</a>
           </li>
@@ -113,13 +125,6 @@
           </li>
         {% endif %}
       </ul>
-    </nav>
-    <nav>
-      <a href="{{ url_for('index') }}">Dashboard</a> |
-      <a href="{{ url_for('config_page') }}">Configuration</a> |
-      <a href="{{ url_for('pause_controls') }}">Pause Controls</a> |
-      <a href="{{ url_for('room_management') }}">Room Management</a> |
-      <a href="{{ url_for('controls_page') }}">Manual Controls</a>
     </nav>
   </header>
 

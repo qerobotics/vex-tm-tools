@@ -4,6 +4,7 @@ import json
 import logging
 import tempfile
 from functools import wraps
+import uuid
 
 from models.fields import FieldState
 from models.config import Config
@@ -19,7 +20,7 @@ def set_event_queue(queue):
     EVENT_QUEUE = queue
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
@@ -267,6 +268,33 @@ def api_scheduled_matches():
 def api_popups():
     return jsonify(_read_json(POPUPS_FILE, default=[]))
 
+@app.route('/api/popups/dismiss', methods=['POST'])
+def dismiss_popup():
+    data = request.get_json()
+    logger.debug(f"Received dismiss request: {data}")
+
+    popup_id = data.get('popup_id')
+    if not popup_id:
+        logger.warning("Dismiss request failed: popup_id is missing")
+        return jsonify({"error": "popup_id is required"}), 400
+
+    logger.debug(f"Attempting to dismiss popup_id: {popup_id}")
+
+    popups = _read_json(POPUPS_FILE, default=[])
+    logger.debug(f"Popups before dismissal: {popups}")
+    
+    # Filter out the popup with the given ID
+    new_popups = [p for p in popups if p.get('popup_id') != popup_id]
+
+    if len(new_popups) < len(popups):
+        logger.debug(f"Found and removed popup_id: {popup_id}. Writing new popups: {new_popups}")
+        _atomic_write(POPUPS_FILE, new_popups)
+        return jsonify({"status": "ok"}), 200
+    else:
+        logger.warning(f"popup_id not found: {popup_id}")
+        return jsonify({"error": "popup_id not found"}), 404
+
+
 @app.route('/api/send_popup', methods=['POST'])
 @login_required()
 def api_send_popup():
@@ -274,6 +302,10 @@ def api_send_popup():
         return jsonify({"error": "Event queue not available"}), 500
     
     data = request.json
+    # Add a unique ID to the popup payload
+    data['popup_id'] = str(uuid.uuid4())
+    logger.debug(f"Creating new popup with data: {data}")
+
     popup_event = Event(type="manual_popup", payload=data)
     EVENT_QUEUE.put_nowait(popup_event)
     return jsonify({"status": "ok"})
@@ -291,9 +323,9 @@ def api_trigger_action():
     EVENT_QUEUE.put_nowait(action_event)
     return jsonify({"status": "ok"})
 
-@app.route('/editPwd', methods=['GET', 'POST'])
+@app.route('/profile', methods=['GET', 'POST'])
 @login_required()
-def edit_password():
+def profile():
     if request.method == 'POST':
         current_password = request.form['current_password']
         new_password = request.form['new_password']
@@ -301,7 +333,7 @@ def edit_password():
         
         if new_password != confirm_password:
             flash('New passwords do not match.', 'danger')
-            return redirect(url_for('edit_password'))
+            return redirect(url_for('profile'))
 
         username = session['user']['userName']
         
@@ -309,17 +341,17 @@ def edit_password():
         auth_result = userManager.Auth(username, current_password)
         if not auth_result['user']:
             flash('Incorrect current password.', 'danger')
-            return redirect(url_for('edit_password'))
+            return redirect(url_for('profile'))
 
         # Change password
         try:
             userManager.ChangePassword(username, new_password)
             flash('Password updated successfully.', 'success')
-            return redirect(url_for('index'))
+            return redirect(url_for('profile'))
         except Exception as e:
             flash(f'An error occurred: {e}', 'danger')
 
-    return render_template('editPwd.html')
+    return render_template('profile.html')
 
 
 if __name__ == "__main__":

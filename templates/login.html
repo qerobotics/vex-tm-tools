@@ -10,7 +10,7 @@
 
 {% block content %}
   <!-- Login form: posts to the auth service -->
-  <form action="/service/auth" method="POST" aria-label="Login form">
+  <form action="/login" method="POST" aria-label="Login form">
     <div class="imgcontainer">
       <h2>Hello, please login below.</h2>
   <!-- Avatar served from static files (SVG) -->
@@ -18,15 +18,20 @@
     </div>
 
     <div class="container">
-      {# Show an error message when provided by the auth service #}
-      {% if error %}
-        <div class="alert alert-error" role="alert">{{ error }}</div>
-      {% endif %}
-      <label for="uname"><b>Username</b></label>
-      <input id="uname" name="uname" type="text" placeholder="Enter Username" value="{{ username|default('')|e }}" required>
+      {# Show flashed messages from the server #}
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="alert alert-{{ category }}" role="alert">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
 
-      <label for="psw"><b>Password</b></label>
-      <input id="psw" name="psw" type="password" placeholder="Enter Password" required>
+      <label for="username"><b>Username</b></label>
+      <input id="username" name="username" type="text" placeholder="Enter Username" value="{{ username|default('')|e }}" required>
+
+      <label for="password"><b>Password</b></label>
+      <input id="password" name="password" type="password" placeholder="Enter Password" required>
 
       <div class="but-row">
         <button type="submit">Login</button>

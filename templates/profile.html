@@ -1,0 +1,53 @@
+{#
+  User Profile page
+  - Extends `base.html` to reuse the consolidated CSS and header.
+  - Contains a simple password change form posted to the auth/password service.
+#}
+
+{% extends 'base.html' %}
+
+{% block title %}User Profile{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <h2>User Profile</h2>
+    <p>Welcome, {{ g.user.userName }}!</p>
+
+    <div class="card mt-4">
+        <div class="card-header">
+            <h4>Change Your Password</h4>
+        </div>
+        <div class="card-body">
+            <form action="{{ url_for('profile') }}" method="POST" aria-label="Change password form">
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                    {% if messages %}
+                        {% for category, message in messages %}
+                            <div class="alert alert-{{ category }}" role="alert">{{ message }}</div>
+                        {% endfor %}
+                    {% endif %}
+                {% endwith %}
+
+                <div class="mb-3">
+                    <label for="current_password" class="form-label"><b>Current Password</b></label>
+                    <input id="current_password" name="current_password" type="password" class="form-control" placeholder="Enter current password" required>
+                </div>
+
+                <div class="mb-3">
+                    <label for="new_password" class="form-label"><b>New Password</b></label>
+                    <input id="new_password" name="new_password" type="password" class="form-control" placeholder="Enter new password" required>
+                </div>
+
+                <div class="mb-3">
+                    <label for="confirm_password" class="form-label"><b>Confirm New Password</b></label>
+                    <input id="confirm_password" name="confirm_password" type="password" class="form-control" placeholder="Confirm new password" required>
+                </div>
+
+                <div class="but-row">
+                    <button type="submit" class="btn btn-primary">Change Password</button>
+                    <a href="{{ url_for('index') }}" class="btn btn-secondary">Cancel</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
