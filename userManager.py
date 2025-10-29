@@ -17,7 +17,7 @@ class User:
 
 class UserManager:
     """
-    UserManager stores user records under `userInfo/<username>/Me.txt`.
+    UserManager stores user records under `storage/userInfo/<username>/Me.txt`.
     File format (CSV-like): username,hashed_password,role,<legacy-token?>
 
     Behavior changes:
@@ -27,7 +27,7 @@ class UserManager:
     """
 
     def _user_file(self, userName):
-        return os.path.join('userInfo', userName, 'Me.txt')
+        return os.path.join('storage/userInfo', userName, 'Me.txt')
 
     def _read_user(self, userName):
         """Return list of fields or None if not found."""
@@ -42,7 +42,7 @@ class UserManager:
 
     def _write_user(self, userName, fields):
         """Write fields (list) as a comma-separated line to the user file."""
-        user_dir = os.path.join('userInfo', userName)
+        user_dir = os.path.join('storage/userInfo', userName)
         if not os.path.isdir(user_dir):
             os.makedirs(user_dir, exist_ok=True)
         path = self._user_file(userName)
@@ -92,7 +92,7 @@ class UserManager:
     def Signup(self, userName, password, role):
         """Create a new user and store the hashed password."""
         # Avoid overwriting existing users
-        if os.path.isdir(os.path.join('userInfo', userName)):
+        if os.path.isdir(os.path.join('storage/userInfo', userName)):
             raise FileExistsError('User already exists')
 
         hashed = generate_password_hash(password)
