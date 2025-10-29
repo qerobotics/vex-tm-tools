@@ -4,8 +4,6 @@ The TM API uses an OAuth 2.0 Client Credentials flow for authorization. This mea
 
 To obtain the token, POST your `client_id`, `client_secret`, and `grant_type` to `https://auth.vextm.dwabtech.com/oauth2/token` as a form-encoded body. You can also supply `client_id` and `client_secret` using HTTP basic access authorization in the `Authorization` header. The `grant_type` parameter should be set to `client_credentials`. Your preferred programming language likely has an OAuth client library already available.
 
-© 2023 Page 5 of 21
-
 **Tournament Manager Public API Guide**
 
 If your client ID and secret are valid, the OAuth server will return a JSON response with `access_token`, `token_type`, and `expires_in` fields. The `expires_in` field indicates how long (in seconds) the token is valid for. The `access_token` and `token_type` fields should be used to construct an `Authorization` header for calling the TM API.
