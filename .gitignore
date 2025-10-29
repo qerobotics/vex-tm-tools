@@ -11,3 +11,6 @@ build/
 
 # pytest cache
 .pytest_cache/
+
+# Ignore storage fields (user-specific field JSON files)
+storage/fields/*
