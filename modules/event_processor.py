@@ -12,7 +12,7 @@ from models.config import Config
 from models.audit import AuditEntry
 
 # Import controllers
-from modules.audio.spotify.controller import SpotifyController
+from modules.audio.spotify.controller import SpotifyController, _extract_match_number
 from modules.video.atem.controller import AtemController
 from modules.vfx.zeros.controller import ZerOSController
 
@@ -164,21 +164,54 @@ class EventProcessor:
         current_state = await self._get_field_state(field_id)
         previous_state_name = current_state.state
         
-        new_state = self._determine_new_state(event, current_state)
+        is_dirty = False
+
+        # Update match name if applicable
+        if event.type == "fieldMatchAssigned":
+            new_match_name = self._format_match_name(event.payload.get("match"))
+            if new_match_name != current_state.match_name:
+                current_state.match_name = new_match_name
+                is_dirty = True
         
+        # Determine and update the state
+        new_state = self._determine_new_state(event, current_state)
         if new_state and new_state != current_state.state:
             current_state.state = new_state
+            is_dirty = True
+            logger.info(f"Updated field {field_id} state to {new_state}")
+        
+        # If any property changed, flush to disk
+        if is_dirty:
             current_state.last_updated = event.timestamp
-            if event.type == "fieldMatchAssigned":
-                current_state.match_id = event.payload.get("match")
-            
             field_file = os.path.join(self.fields_dir, f"field{field_id}.json")
             await self._atomic_write(field_file, current_state.to_json())
-            
-            logger.info(f"Updated field {field_id} state to {new_state}")
-            return previous_state_name, new_state
+            return previous_state_name, new_state or previous_state_name
         
         return None, None
+
+    def _format_match_name(self, match_obj):
+        if not match_obj:
+            return None
+        
+        # Handle direct string match names from simulation
+        if isinstance(match_obj, str):
+            return match_obj
+
+        if not isinstance(match_obj, dict):
+            return None
+        
+        round_val = match_obj.get("round")
+        if not round_val:
+            return None
+
+        round_map = {
+            "QUAL": "Q",
+            "ROUND_ROBIN": "RR",
+            # Add other mappings as needed
+        }
+        
+        round_prefix = round_map.get(round_val, "M")
+        return f"{round_prefix}{match_obj.get('match', '')}"
 
     def _determine_new_state(self, event, current_state):
         # This logic will be based on the VEX TM API docs and the desired state flow
@@ -191,6 +224,10 @@ class EventProcessor:
         }
         
         new_state = event_type_to_state.get(event.type)
+
+        # If a match starts, we should always go to active state.
+        if event.type == "matchStarted":
+            return "active"
 
         # More complex logic can be added here, e.g., from 'finish' it should go to 'standby'
         if current_state.state == "finish" and new_state is None:
@@ -224,7 +261,21 @@ class EventProcessor:
 
         if action_type == "audio":
             if self.spotify_controller and not self.config.paused.get("audio"):
-                action = AudioAction(**action_data)
+                action_data_copy = action_data.copy()
+                action_data_copy["metadata"] = action_data_copy.get("metadata", {}).copy()
+
+                if action_data.get("command") == "play_playlist_track" and event and event.field:
+                    field_state = await self._get_field_state(event.field)
+                    match_name = field_state.match_name
+                    if match_name:
+                        track_number = _extract_match_number(match_name)
+                        if track_number is not None:
+                            action_data_copy["metadata"]["track_number"] = track_number
+                            logger.info(f"Enriched action with track number: {track_number}")
+                    else:
+                        logger.warning(f"Could not determine match name for event {event.id} on field {event.field} to play track.")
+
+                action = AudioAction(**action_data_copy)
                 self.spotify_controller.execute_action(action)
             else:
                 logger.info("Skipping audio action because controller is not available or audio is paused.")
@@ -290,9 +341,8 @@ class EventProcessor:
                 # 1. Update field state
                 old_state, new_state = await self._update_field_state(event)
 
-                # 2. Trigger actions
-                if old_state or new_state:
-                    await self._trigger_actions(event, old_state, new_state)
+                # 2. Trigger actions based on the event itself AND any state change
+                await self._trigger_actions(event, old_state, new_state)
 
                 self.event_queue.task_done()
             except Exception as e:
@@ -309,7 +359,7 @@ if __name__ == '__main__':
         processing_task = asyncio.create_task(processor.process_events())
 
         # Simulate some events
-        await event_queue.put(Event(type="fieldMatchAssigned", field=1, payload={"match": "Q1"}))
+        await event_queue.put(Event(type="fieldMatchAssigned", field=1, payload={"match": {"round": "QUAL", "match": 1}}))
         await asyncio.sleep(1)
         await event_queue.put(Event(type="fieldActivated", field=1))
         await asyncio.sleep(1)
@@ -317,7 +367,7 @@ if __name__ == '__main__':
         await asyncio.sleep(1)
         await event_queue.put(Event(type="matchStopped", field=1))
         await asyncio.sleep(1)
-        await event_queue.put(Event(type="fieldMatchAssigned", field=2, payload={"match": "Q2"}))
+        await event_queue.put(Event(type="fieldMatchAssigned", field=2, payload={"match": {"round": "QUAL", "match": 2}}))
 
 
         await event_queue.join() # Wait for all items to be processed

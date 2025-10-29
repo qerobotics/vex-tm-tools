@@ -1,0 +1,22 @@
+{
+    "on_event": {
+        "matchStarted": [
+            {
+                "type": "audio",
+                "command": "play_playlist_track",
+                "metadata": {
+                    "playlist_uri": "spotify:playlist:5paEjpgpPf5CkhuSHyJ66i"
+                }
+            }
+        ],
+        "matchStopped": [
+            {
+                "type": "audio",
+                "command": "pause"
+            }
+        ]
+
+    },
+    "on_state_change": {
+    }
+}

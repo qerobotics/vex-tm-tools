@@ -1,9 +1,20 @@
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import os
+import re
 import logging
+import random
 
 logger = logging.getLogger(__name__)
+
+def _extract_match_number(match_name):
+    if not match_name:
+        return None
+    
+    numbers = re.findall(r'\d+', match_name)
+    if numbers:
+        return int(numbers[-1])
+    return None
 
 class SpotifyController:
     def __init__(self, client_id, client_secret, redirect_uri, device_name=None):
@@ -58,6 +69,39 @@ class SpotifyController:
         try:
             if command == "play":
                 self.sp.start_playback(device_id=self.device_id, context_uri=metadata.get("context_uri"))
+            elif command == "play_playlist_track":
+                playlist_uri = metadata.get("playlist_uri")
+                track_number = metadata.get("track_number") # 1-based index
+                
+                if not playlist_uri:
+                    logger.error("play_playlist_track command requires 'playlist_uri' in metadata.")
+                    return
+
+                if track_number is not None:
+                    logger.info(f"Playing track {track_number} from playlist {playlist_uri}")
+                    # Spotify API is 0-indexed for tracks
+                    self.sp.start_playback(device_id=self.device_id, context_uri=playlist_uri, offset={"position": track_number - 1})
+                else:
+                    logger.info(f"No track number provided. Playing a random track from playlist {playlist_uri}")
+                    try:
+                        # Get the total number of tracks in the playlist
+                        playlist_items = self.sp.playlist_items(playlist_uri, fields='total')
+                        if not playlist_items:
+                            logger.warning(f"Could not retrieve items for playlist {playlist_uri}.")
+                            return
+
+                        total_tracks = playlist_items.get('total', 0)
+                        
+                        if total_tracks > 0:
+                            # Pick a random track
+                            random_track_index = random.randint(0, total_tracks - 1)
+                            logger.info(f"Selected random track number {random_track_index + 1} out of {total_tracks}")
+                            self.sp.start_playback(device_id=self.device_id, context_uri=playlist_uri, offset={"position": random_track_index})
+                        else:
+                            logger.warning(f"Playlist {playlist_uri} is empty. Cannot play a random track.")
+                    except spotipy.exceptions.SpotifyException as e:
+                        logger.error(f"Could not fetch playlist details to play random track: {e}")
+
             elif command == "pause":
                 self.sp.pause_playback(device_id=self.device_id)
             elif command == "next":

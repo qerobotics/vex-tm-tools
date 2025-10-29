@@ -41,7 +41,7 @@
         card.innerHTML = `
             <h2>Field ${field.field_id}</h2>
             <p class="state"><strong>State:</strong> ${field.state || 'N/A'}</p>
-            <p><strong>Match:</strong> ${field.match_id ? JSON.stringify(field.match_id) : 'None'}</p>
+            <p><strong>Match:</strong> ${field.match_name || 'None'}</p>
             <p class="muted"><small>Last Updated: ${lastUpdated}</small></p>
         `;
         return card;

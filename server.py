@@ -326,6 +326,26 @@ def api_trigger_action():
     asyncio.run_coroutine_threadsafe(event_queue.put(action_event), loop)
     return jsonify({"status": "ok"})
 
+@app.route('/api/simulate_event', methods=['POST'])
+def api_simulate_event():
+    if not event_queue or not loop:
+        return jsonify({"error": "Event queue not available"}), 500
+        
+    data = request.json
+    # Basic validation
+    if 'type' not in data or 'field' not in data:
+        return jsonify({"error": "Request must include 'type' and 'field'"}), 400
+
+    event = Event(
+        type=data['type'],
+        field=data['field'],
+        payload=data.get('payload', {})
+    )
+    
+    asyncio.run_coroutine_threadsafe(event_queue.put(event), loop)
+    logger.info(f"Successfully queued simulated event: {event.to_json()}")
+    return jsonify({"status": "ok", "event": event.to_dict()})
+
 @app.route('/profile', methods=['GET', 'POST'])
 @login_required()
 def profile():
