@@ -1,3 +1,4 @@
+import asyncio
 from flask import Flask, render_template, jsonify, request, redirect, url_for, session, flash, g
 import os
 import json
@@ -13,11 +14,13 @@ from userManager import UserManager
 
 # This is a placeholder for where the event queue would be shared
 # In a real app, this would be managed more robustly (e.g., via a global context or passed in)
-EVENT_QUEUE = None
+event_queue = None
+loop = None
 
-def set_event_queue(queue):
-    global EVENT_QUEUE
-    EVENT_QUEUE = queue
+def set_event_queue(queue, main_loop):
+    global event_queue, loop
+    event_queue = queue
+    loop = main_loop
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -298,29 +301,29 @@ def dismiss_popup():
 @app.route('/api/send_popup', methods=['POST'])
 @login_required()
 def api_send_popup():
-    if not EVENT_QUEUE:
+    if not event_queue or not loop:
         return jsonify({"error": "Event queue not available"}), 500
     
     data = request.json
-    # Add a unique ID to the popup payload
     data['popup_id'] = str(uuid.uuid4())
     logger.debug(f"Creating new popup with data: {data}")
 
     popup_event = Event(type="manual_popup", payload=data)
-    EVENT_QUEUE.put_nowait(popup_event)
+    asyncio.run_coroutine_threadsafe(event_queue.put(popup_event), loop)
     return jsonify({"status": "ok"})
 
 @app.route('/api/trigger_action', methods=['POST'])
 @login_required()
 def api_trigger_action():
-    if not EVENT_QUEUE:
+    if not event_queue or not loop:
         return jsonify({"error": "Event queue not available"}), 500
         
     data = request.json
-    # This is a simplified way to inject manual actions.
-    # We wrap it in a generic "manual_action" event type.
     action_event = Event(type="manual_action", payload=data)
-    EVENT_QUEUE.put_nowait(action_event)
+    
+    # Use run_coroutine_threadsafe to safely put an item into the asyncio queue
+    # from this synchronous Flask thread.
+    asyncio.run_coroutine_threadsafe(event_queue.put(action_event), loop)
     return jsonify({"status": "ok"})
 
 @app.route('/profile', methods=['GET', 'POST'])

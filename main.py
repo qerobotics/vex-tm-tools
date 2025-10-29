@@ -12,7 +12,7 @@ from modules.match_scheduler import MatchScheduler
 from server import app, set_event_queue
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def run_flask(host, port):
@@ -43,7 +43,7 @@ async def main():
         return
 
     # Share the queue with the Flask app for manual controls
-    set_event_queue(event_queue)
+    set_event_queue(event_queue, asyncio.get_running_loop())
 
     # --- Initialize Components ---
     # API Client

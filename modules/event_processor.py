@@ -3,7 +3,7 @@ import json
 import os
 import logging
 import tempfile
-import threading
+from asyncio import Lock
 
 from models.events import Event
 from models.fields import FieldState
@@ -17,7 +17,7 @@ from modules.video.atem.controller import AtemController
 from modules.vfx.zeros.controller import ZerOSController
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class EventProcessor:
@@ -90,7 +90,7 @@ class EventProcessor:
 
     def _get_lock(self, file_path):
         if file_path not in self._file_locks:
-            self._file_locks[file_path] = threading.Lock()
+            self._file_locks[file_path] = Lock()
         return self._file_locks[file_path]
 
     def _load_action_mappings(self):
@@ -105,36 +105,45 @@ class EventProcessor:
             logger.error(f"Error decoding JSON from {self.actions_file}.")
             return ActionMapping()
 
-    def _log_audit_entry(self, entry):
+    async def _log_audit_entry(self, entry):
         lock = self._get_lock(self.audit_log_file)
-        with lock:
+        async with lock:
             try:
-                with open(self.audit_log_file, 'a') as f:
-                    f.write(entry.to_json() + '\n')
+                await asyncio.to_thread(self._write_to_log, entry.to_json() + '\n')
             except Exception as e:
                 logger.error(f"Failed to write to audit log {self.audit_log_file}: {e}")
 
-    def _atomic_write(self, file_path, data):
+    def _write_to_log(self, content):
+        with open(self.audit_log_file, 'a') as f:
+            f.write(content)
+
+    async def _atomic_write(self, file_path, data):
         lock = self._get_lock(file_path)
-        with lock:
+        async with lock:
             try:
-                temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(file_path))
-                with os.fdopen(temp_fd, 'w') as temp_f:
-                    temp_f.write(data)
-                os.rename(temp_path, file_path)
+                await asyncio.to_thread(self._write_atomic_file, file_path, data)
                 logger.info(f"Successfully wrote to {file_path}")
             except Exception as e:
                 logger.error(f"Failed to atomically write to {file_path}: {e}")
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
 
-    def _get_field_state(self, field_id):
+    def _write_atomic_file(self, file_path, data):
+        temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(file_path))
+        try:
+            with os.fdopen(temp_fd, 'w') as temp_f:
+                temp_f.write(data)
+            os.rename(temp_path, file_path)
+        except Exception as e:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            raise e
+
+    async def _get_field_state(self, field_id):
         field_file = os.path.join(self.fields_dir, f"field{field_id}.json")
         lock = self._get_lock(field_file)
-        with lock:
+        async with lock:
             try:
-                with open(field_file, 'r') as f:
-                    return FieldState.from_json(f.read())
+                content = await asyncio.to_thread(self._read_file, field_file)
+                return FieldState.from_json(content)
             except FileNotFoundError:
                 logger.info(f"No existing state for field {field_id}, creating new one.")
                 return FieldState(field_id=field_id, state="standby")
@@ -142,13 +151,17 @@ class EventProcessor:
                 logger.error(f"Could not decode JSON for field {field_id}, creating new one.")
                 return FieldState(field_id=field_id, state="standby")
 
-    def _update_field_state(self, event):
+    def _read_file(self, file_path):
+        with open(file_path, 'r') as f:
+            return f.read()
+
+    async def _update_field_state(self, event):
         if not event.field:
             logger.info(f"Event {event.id} has no field, skipping state update.")
             return None, None
 
         field_id = event.field
-        current_state = self._get_field_state(field_id)
+        current_state = await self._get_field_state(field_id)
         previous_state_name = current_state.state
         
         new_state = self._determine_new_state(event, current_state)
@@ -160,7 +173,7 @@ class EventProcessor:
                 current_state.match_id = event.payload.get("match")
             
             field_file = os.path.join(self.fields_dir, f"field{field_id}.json")
-            self._atomic_write(field_file, current_state.to_json())
+            await self._atomic_write(field_file, current_state.to_json())
             
             logger.info(f"Updated field {field_id} state to {new_state}")
             return previous_state_name, new_state
@@ -185,7 +198,7 @@ class EventProcessor:
 
         return new_state
 
-    def _trigger_actions(self, event, old_state, new_state):
+    async def _trigger_actions(self, event, old_state, new_state):
         actions_to_run = []
         
         # Check for actions based on event type
@@ -199,54 +212,65 @@ class EventProcessor:
                 actions_to_run.extend(self.action_mappings.on_state_change[state_transition])
 
         for action_data in actions_to_run:
-            action_type = action_data.get("type")
-            if not action_type:
-                continue
+            await self._execute_action(action_data, event)
 
-            if action_type == "audio":
-                if self.spotify_controller and not self.config.paused.get("audio"):
-                    action = AudioAction(**action_data)
-                    self.spotify_controller.execute_action(action)
-                else:
-                    logger.info("Skipping audio action because controller is not available or audio is paused.")
-            
-            elif action_type == "video":
-                if self.atem_controller and not self.config.paused.get("video"):
-                    # Map field_id to camera_id if not specified
-                    if "camera_id" not in action_data and event.field:
-                        action_data["camera_id"] = self.config.field_to_camera.get(str(event.field))
-                    
-                    if action_data.get("camera_id"):
-                        action = VideoAction(**action_data)
-                        self.atem_controller.execute_action(action)
-                    else:
-                        logger.warning(f"No camera_id for video action on field {event.field}")
-                else:
-                    logger.info("Skipping video action because controller is not available or video is paused.")
+    async def _execute_action(self, action_data, event=None):
+        action_type = action_data.get("type")
+        if not action_type:
+            logger.warning("Action data is missing 'type'.")
+            return
 
-            elif action_type == "lighting":
-                if self.zeros_controller and not self.config.paused.get("lighting"):
-                    action = LightingAction(**action_data)
-                    self.zeros_controller.execute_action(action)
-                else:
-                    logger.info("Skipping lighting action because controller is not available or lighting is paused.")
-            
+        logger.debug(f"Executing action: {action_data}")
+
+        if action_type == "audio":
+            if self.spotify_controller and not self.config.paused.get("audio"):
+                action = AudioAction(**action_data)
+                self.spotify_controller.execute_action(action)
             else:
-                logger.warning(f"Unknown action type: {action_type}")
+                logger.info("Skipping audio action because controller is not available or audio is paused.")
+        
+        elif action_type == "video":
+            if self.atem_controller and not self.config.paused.get("video"):
+                # Map field_id to camera_id if not specified and event is available
+                if "camera_id" not in action_data and event and event.field:
+                    action_data["camera_id"] = self.config.field_to_camera.get(str(event.field))
+                
+                if action_data.get("camera_id"):
+                    action = VideoAction(**action_data)
+                    self.atem_controller.execute_action(action)
+                else:
+                    logger.warning(f"No camera_id for video action on event: {event.id if event else 'N/A'}")
+            else:
+                logger.info("Skipping video action because controller is not available or video is paused.")
+
+        elif action_type == "lighting":
+            if self.zeros_controller and not self.config.paused.get("lighting"):
+                action = LightingAction(**action_data)
+                self.zeros_controller.execute_action(action)
+            else:
+                logger.info("Skipping lighting action because controller is not available or lighting is paused.")
+        
+        else:
+            logger.warning(f"Unknown action type: {action_type}")
 
 
-    def _handle_special_events(self, event):
+    async def _handle_special_events(self, event):
         if event.type == "match_scheduled":
             logger.info(f"Handling match_scheduled event: {event.payload}")
             # This file is consumed by the frontend to show popups
-            self._atomic_write(self.scheduled_matches_file, json.dumps(event.payload, indent=4))
+            await self._atomic_write(self.scheduled_matches_file, json.dumps(event.payload, indent=4))
             return True
             
         if event.type == "manual_popup":
             logger.info(f"Handling manual_popup event: {event.payload}")
             # This file holds a list of active popups
             # A real implementation would manage this list (add, remove expired)
-            self._atomic_write(self.popups_file, json.dumps([event.payload], indent=4))
+            await self._atomic_write(self.popups_file, json.dumps([event.payload], indent=4))
+            return True
+        
+        if event.type == "manual_action":
+            logger.info(f"Handling manual action: {event.payload}")
+            await self._execute_action(event.payload)
             return True
             
         return False
@@ -259,16 +283,16 @@ class EventProcessor:
                 logger.info(f"Processing event: {event.to_json()}")
 
                 # Handle special, non-field-related events first
-                if self._handle_special_events(event):
+                if await self._handle_special_events(event):
                     self.event_queue.task_done()
                     continue
 
                 # 1. Update field state
-                old_state, new_state = self._update_field_state(event)
+                old_state, new_state = await self._update_field_state(event)
 
                 # 2. Trigger actions
                 if old_state or new_state:
-                    self._trigger_actions(event, old_state, new_state)
+                    await self._trigger_actions(event, old_state, new_state)
 
                 self.event_queue.task_done()
             except Exception as e:
