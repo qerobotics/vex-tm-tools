@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Small CLI to add a new user to the `userInfo/` store using secure password hashing.
+Small CLI to add a new user to the `storage/userInfo/` store using secure password hashing.
 
 Usage:
   - Interactive: python3 tools/add_user.py
@@ -22,7 +22,7 @@ except Exception as e:
 
 
 def add_user(username, password, role):
-    userdir = os.path.join('userInfo', username)
+    userdir = os.path.join('storage/userInfo', username)
     if os.path.isdir(userdir):
         print(f"Error: user '{username}' already exists", file=sys.stderr)
         return 2
