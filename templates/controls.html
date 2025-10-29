@@ -144,7 +144,8 @@
     async function fetchActivePopups() {
         try {
             const response = await fetch('/api/active_popups');
-            const popups = await response.json();
+            const data = await response.json();
+            const popups = Array.isArray(data) ? data : []; // Ensure popups is an array
             const popupList = document.getElementById('popup-list');
             popupList.innerHTML = ''; // Clear current list
             if (popups.length === 0) {

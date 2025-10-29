@@ -100,18 +100,24 @@
         const popups = await response.json();
         console.log("Received popups:", popups);
         
-        const roomPopup = popups.find(p => p.room_id === ROOM_ID);
+        const roomPopup = popups.find(p => p && p.room_ids && p.room_ids.includes(ROOM_ID));
         if (roomPopup) {
             console.log(`Found popup for this room:`, roomPopup);
             // Only show if it's not the one we are currently showing
-            if (roomPopup.popup_id !== currentPopupId) {
-                console.log(`New popup found (current: ${currentPopupId}, new: ${roomPopup.popup_id}). Showing it.`);
-                showPopup(roomPopup.message, roomPopup.duration, roomPopup.popup_id);
+            if (roomPopup.id !== currentPopupId) {
+                console.log(`New popup found (current: ${currentPopupId}, new: ${roomPopup.id}). Showing it.`);
+                showPopup(roomPopup.message, roomPopup.duration, roomPopup.id);
             } else {
-                console.log(`Popup ${roomPopup.popup_id} is already being displayed.`);
+                console.log(`Popup ${roomPopup.id} is already being displayed.`);
             }
         } else {
             console.log("No popups for this room.");
+            // If no popups are active for this room, ensure the modal is hidden
+            const modal = document.getElementById('modal-container');
+            if (modal.style.display !== 'none' && currentPopupId) {
+                 modal.style.display = 'none';
+                 currentPopupId = null;
+            }
         }
     }
 

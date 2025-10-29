@@ -287,7 +287,7 @@ def dismiss_popup():
     logger.debug(f"Popups before dismissal: {popups}")
     
     # Filter out the popup with the given ID
-    new_popups = [p for p in popups if p.get('popup_id') != popup_id]
+    new_popups = [p for p in popups if p.get('id') != popup_id]
 
     if len(new_popups) < len(popups):
         logger.debug(f"Found and removed popup_id: {popup_id}. Writing new popups: {new_popups}")
@@ -339,16 +339,14 @@ def api_send_popup():
     if not room_ids:
         return jsonify({"error": "room_ids must be a non-empty list"}), 400
 
-    # Generate one event per room to keep logic simple downstream
-    for room_id in room_ids:
-        popup_payload = {
-            "id": str(uuid.uuid4()),
-            "room_id": room_id,
-            "message": data.get("message"),
-            "duration": data.get("duration", 15)
-        }
-        popup_event = Event(type="manual_popup", payload=popup_payload)
-        asyncio.run_coroutine_threadsafe(event_queue.put(popup_event), loop)
+    popup_payload = {
+        "id": str(uuid.uuid4()),
+        "room_ids": room_ids,
+        "message": data.get("message"),
+        "duration": data.get("duration", 15)
+    }
+    popup_event = Event(type="manual_popup", payload=popup_payload)
+    asyncio.run_coroutine_threadsafe(event_queue.put(popup_event), loop)
 
     return jsonify({"status": "ok"})
 
