@@ -237,16 +237,22 @@ class EventProcessor:
 
     async def _trigger_actions(self, event, old_state, new_state):
         actions_to_run = []
+        field_id = event.field
         
         # Check for actions based on event type
-        if event.type in self.action_mappings.on_event:
-            actions_to_run.extend(self.action_mappings.on_event[event.type])
+        actions_to_run.extend(
+            self.action_mappings.get_actions(self.action_mappings.on_event, event.type, field_id)
+        )
 
         # Check for actions based on state change
-        if old_state and new_state:
+        if old_state and new_state and old_state != new_state:
             state_transition = f"{old_state}->{new_state}"
-            if state_transition in self.action_mappings.on_state_change:
-                actions_to_run.extend(self.action_mappings.on_state_change[state_transition])
+            actions_to_run.extend(
+                self.action_mappings.get_actions(self.action_mappings.on_state_change, state_transition, field_id)
+            )
+
+        if actions_to_run:
+            logger.info(f"Found {len(actions_to_run)} actions to run for event {event.type} on field {field_id} (state: {old_state}->{new_state})")
 
         for action_data in actions_to_run:
             await self._execute_action(action_data, event)
