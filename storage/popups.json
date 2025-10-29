@@ -1,1 +1,8 @@
-[]
+[
+    {
+        "id": "8944442a-2edd-4e46-8a52-eceb56369dce",
+        "room_id": "M4",
+        "message": "test",
+        "duration": 15
+    }
+]

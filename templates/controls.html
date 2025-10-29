@@ -5,70 +5,126 @@
 {% block content %}
 <section>
     <h1>Manual Controls</h1>
-    <p class="muted">Trigger actions manually. These are sent to the event queue.</p>
+    <p class="muted">A dashboard for direct control over event systems.</p>
     
-    <div class="controls-grid">
+    <div class="quad-grid">
+        <!-- Lighting Control Panel -->
         <div class="control-card">
-            <h2>Lighting</h2>
-            <label for="lighting-preset">Preset ID:</label>
-            <input type="number" id="lighting-preset" value="13">
-            <button onclick="triggerAction('lighting')">Send Lighting Action</button>
+            <h2><i class="fas fa-lightbulb"></i> Lighting</h2>
+            <div class="preset-grid">
+                {% for i in range(1, 16) %}
+                <button class="preset-btn" onclick="triggerAction('lighting', { preset_id: {{ i }} })">{{ i }}</button>
+                {% endfor %}
+            </div>
+            <div class="manual-entry">
+                <input type="number" id="lighting-preset-manual" placeholder="Manual ID">
+                <button onclick="sendManualLighting()">Send</button>
+            </div>
         </div>
 
+        <!-- Audio Control Panel -->
         <div class="control-card">
-            <h2>Video</h2>
-            <label for="video-camera">Camera ID:</label>
-            <input type="number" id="video-camera" value="1">
-            <button onclick="triggerAction('video')">Send Video Action</button>
+            <h2><i class="fab fa-spotify"></i> Audio</h2>
+            <div class="quick-actions">
+                <button onclick="triggerAction('audio', { command: 'play' })"><i class="fas fa-play"></i> Play</button>
+                <button onclick="triggerAction('audio', { command: 'pause' })"><i class="fas fa-pause"></i> Pause</button>
+                <button onclick="triggerAction('audio', { command: 'next_track' })"><i class="fas fa-forward"></i> Skip</button>
+                <button onclick="triggerAction('audio', { command: 'previous_track' })"><i class="fas fa-backward"></i> Restart</button>
+            </div>
+            <div class="manual-entry">
+                <input type="text" id="audio-command" placeholder="Manual command">
+                <input type="text" id="audio-context" placeholder="Context URI (optional)">
+                <button onclick="sendManualAudio()">Send</button>
+            </div>
         </div>
 
+        <!-- Camera Control Panel -->
         <div class="control-card">
-            <h2>Audio (Spotify)</h2>
-            <label for="audio-command">Command:</label>
-            <input type="text" id="audio-command" value="play">
-            <label for="audio-context">Context URI (optional):</label>
-            <input type="text" id="audio-context" placeholder="spotify:playlist:...">
-            <button onclick="triggerAction('audio')">Send Audio Action</button>
+            <h2><i class="fas fa-video"></i> Camera</h2>
+            <div class="quick-actions">
+                <button onclick="triggerAction('video', { command: 'change_program_input', camera_id: 1 })">Cam 1</button>
+                <button onclick="triggerAction('video', { command: 'change_program_input', camera_id: 2 })">Cam 2</button>
+                <button onclick="triggerAction('video', { command: 'change_program_input', camera_id: 3 })">Cam 3</button>
+            </div>
         </div>
-        
-        <div class="control-card">
-            <h2>Manual Popup</h2>
-            <label for="popup-room">Room ID:</label>
-            <input type="text" id="popup-room" value="room1">
-            <label for="popup-message">Message:</label>
-            <input type="text" id="popup-message" value="Welcome!">
-            <button onclick="sendPopup()">Send Popup</button>
+
+        <!-- Popup Control Panel -->
+        <div class="control-card" id="popups-card">
+            <h2><i class="fas fa-comment-alt"></i> Popups</h2>
+            <div class="manual-entry">
+                <input type="text" id="popup-message" placeholder="Popup Message">
+                <div class="room-selection">
+                    <p>Send to rooms:</p>
+                    <!-- Room checkboxes will be dynamically inserted here -->
+                </div>
+                <button onclick="sendPopup()">Send Popup</button>
+            </div>
+            <div class="active-popups">
+                <h3>Active Popups</h3>
+                <ul id="popup-list">
+                    <!-- Active popups will be listed here -->
+                </ul>
+            </div>
         </div>
     </div>
 </section>
 
 <script>
-    async function triggerAction(type) {
-        let payload = { type: type };
-        if (type === 'lighting') {
-            payload.preset_id = document.getElementById('lighting-preset').value;
-        } else if (type === 'video') {
-            payload.camera_id = document.getElementById('video-camera').value;
-        } else if (type === 'audio') {
-            payload.command = document.getElementById('audio-command').value;
-            const contextUri = document.getElementById('audio-context').value;
+    // --- Generic Action Trigger ---
+    async function triggerAction(type, params) {
+        const payload = { type, ...params };
+        console.log('Triggering action:', payload);
+        try {
+            const response = await fetch('/api/trigger_action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) {
+                console.error('Failed to trigger action:', await response.text());
+            }
+        } catch (error) {
+            console.error('Error sending action:', error);
+        }
+    }
+
+    // --- Specific Handlers for Manual Inputs ---
+    function sendManualLighting() {
+        const presetId = document.getElementById('lighting-preset-manual').value;
+        if (presetId) {
+            triggerAction('lighting', { preset_id: parseInt(presetId) });
+        }
+    }
+
+    function sendManualAudio() {
+        const command = document.getElementById('audio-command').value;
+        const contextUri = document.getElementById('audio-context').value;
+        if (command) {
+            let payload = { command };
             if (contextUri) {
                 payload.metadata = { context_uri: contextUri };
             }
+            triggerAction('audio', payload);
         }
-
-        await fetch('/api/trigger_action', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
     }
 
+    // --- Popup Management ---
     async function sendPopup() {
+        const message = document.getElementById('popup-message').value;
+        if (!message) return;
+
+        const selectedRooms = Array.from(document.querySelectorAll('.room-selection input:checked'))
+                                   .map(cb => cb.value);
+        
+        if (selectedRooms.length === 0) {
+            alert("Please select at least one room.");
+            return;
+        }
+
         const payload = {
-            room_id: document.getElementById('popup-room').value,
-            message: document.getElementById('popup-message').value,
-            duration: 10 // seconds
+            message: message,
+            room_ids: selectedRooms,
+            duration: 15 // seconds, or make this configurable
         };
 
         await fetch('/api/send_popup', {
@@ -76,24 +132,197 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
+        // After sending, refresh the list of active popups
+        setTimeout(fetchActivePopups, 500);
     }
+
+    async function removePopup(popupId) {
+        await fetch(`/api/remove_popup/${popupId}`, { method: 'POST' });
+        setTimeout(fetchActivePopups, 500);
+    }
+
+    async function fetchActivePopups() {
+        try {
+            const response = await fetch('/api/active_popups');
+            const popups = await response.json();
+            const popupList = document.getElementById('popup-list');
+            popupList.innerHTML = ''; // Clear current list
+            if (popups.length === 0) {
+                popupList.innerHTML = '<li>No active popups.</li>';
+            } else {
+                popups.forEach(popup => {
+                    const li = document.createElement('li');
+                    li.innerHTML = `
+                        <span>${popup.message} <i>(Rooms: ${popup.room_ids.join(', ')})</i></span>
+                        <button class="remove-btn" onclick="removePopup('${popup.id}')">&times;</button>
+                    `;
+                    popupList.appendChild(li);
+                });
+            }
+        } catch (error) {
+            console.error("Failed to fetch active popups:", error);
+            document.getElementById('popup-list').innerHTML = '<li>Error loading popups.</li>';
+        }
+    }
+    
+    async function fetchRooms() {
+        try {
+            const response = await fetch('/api/config');
+            const config = await response.json();
+            const rooms = config.rooms || {};
+            const roomSelectionDiv = document.querySelector('.room-selection');
+            
+            // Clear existing checkboxes
+            const p = roomSelectionDiv.querySelector('p');
+            roomSelectionDiv.innerHTML = '';
+            roomSelectionDiv.appendChild(p);
+
+            if (Object.keys(rooms).length > 0) {
+                for (const roomId in rooms) {
+                    const label = document.createElement('label');
+                    label.innerHTML = `<input type="checkbox" value="${roomId}"> ${roomId}`;
+                    roomSelectionDiv.appendChild(label);
+                }
+            } else {
+                roomSelectionDiv.innerHTML += '<p class="muted">No rooms configured.</p>';
+            }
+        } catch (error) {
+            console.error("Failed to fetch rooms:", error);
+        }
+    }
+
+    // --- Initial Load ---
+    document.addEventListener('DOMContentLoaded', () => {
+        fetchRooms();
+        fetchActivePopups();
+        // Refresh popups every 10 seconds
+        setInterval(fetchActivePopups, 10000);
+    });
 </script>
 
 <style>
-    .controls-grid {
+    .quad-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-        gap: 1rem;
+        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+        gap: 1.5rem;
+        margin-top: 1rem;
     }
+
     .control-card {
         background-color: var(--color-background-secondary);
-        padding: 1rem;
+        padding: 1.5rem;
         border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
     }
-    .control-card input {
-        width: 100%;
+
+    .control-card h2 {
+        margin-top: 0;
+        border-bottom: 1px solid var(--color-border);
+        padding-bottom: 0.5rem;
+    }
+    
+    .control-card h2 .fas, .control-card h2 .fab {
+        margin-right: 0.5rem;
+    }
+
+    .preset-grid {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 0.5rem;
+    }
+
+    .preset-btn {
+        aspect-ratio: 1 / 1;
+        font-weight: bold;
+    }
+
+    .manual-entry {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 0.5rem;
+    }
+
+    .manual-entry input {
+        flex-grow: 1;
+        width: auto;
+    }
+
+    .quick-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.5rem;
+    }
+    
+    .quick-actions button {
+        padding: 0.8rem;
+    }
+
+    #popups-card .manual-entry {
+        flex-direction: column;
+    }
+    
+    .room-selection {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        margin: 0.5rem 0;
+    }
+    
+    .room-selection p {
+        margin: 0;
+        font-weight: bold;
+    }
+    
+    .room-selection label {
+        display: block;
+        background: var(--color-background-primary);
         padding: 0.5rem;
-        margin-bottom: 0.5rem;
+        border-radius: 4px;
+    }
+
+    .active-popups {
+        margin-top: 1rem;
+        border-top: 1px solid var(--color-border);
+        padding-top: 1rem;
+    }
+    
+    .active-popups h3 {
+        margin-top: 0;
+    }
+
+    #popup-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    #popup-list li {
+        background-color: var(--color-background-primary);
+        padding: 0.5rem 1rem;
+        border-radius: 4px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    #popup-list li i {
+        font-size: 0.9em;
+        color: var(--color-text-muted);
+    }
+
+    .remove-btn {
+        background: none;
+        border: none;
+        color: var(--color-accent);
+        font-size: 1.5em;
+        line-height: 1;
+        cursor: pointer;
+        padding: 0 0.5rem;
     }
 </style>
 {% endblock %}

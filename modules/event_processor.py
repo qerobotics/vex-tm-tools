@@ -322,7 +322,9 @@ class EventProcessor:
             logger.info(f"Handling manual_popup event: {event.payload}")
             # This file holds a list of active popups
             # A real implementation would manage this list (add, remove expired)
-            await self._atomic_write(self.popups_file, json.dumps([event.payload], indent=4))
+            popups = await self._read_popups()
+            popups.append(event.payload)
+            await self._atomic_write(self.popups_file, json.dumps(popups, indent=4))
             return True
         
         if event.type == "manual_action":
@@ -331,6 +333,14 @@ class EventProcessor:
             return True
             
         return False
+
+    async def _read_popups(self):
+        try:
+            async with self._get_lock(self.popups_file):
+                content = await asyncio.to_thread(self._read_file, self.popups_file)
+                return json.loads(content)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return []
 
     async def process_events(self):
         logger.info("Event processor started.")

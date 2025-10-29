@@ -298,6 +298,36 @@ def dismiss_popup():
         return jsonify({"error": "popup_id not found"}), 404
 
 
+@app.route('/api/config')
+def api_config():
+    """
+    API endpoint to get the current config.
+    """
+    config_data = _read_json(CONFIG_FILE, default={})
+    return jsonify(config_data)
+
+@app.route('/api/active_popups')
+def api_active_popups():
+    """
+    API endpoint to get the list of active popups.
+    """
+    return jsonify(_read_json(POPUPS_FILE, default=[]))
+
+@app.route('/api/remove_popup/<popup_id>', methods=['POST'])
+@login_required()
+def remove_popup(popup_id):
+    """
+    Removes a popup from the active list.
+    """
+    popups = _read_json(POPUPS_FILE, default=[])
+    new_popups = [p for p in popups if p.get('id') != popup_id]
+    
+    if len(new_popups) < len(popups):
+        _atomic_write(POPUPS_FILE, new_popups)
+        return jsonify({"status": "ok"}), 200
+    else:
+        return jsonify({"error": "popup_id not found"}), 404
+
 @app.route('/api/send_popup', methods=['POST'])
 @login_required()
 def api_send_popup():
@@ -305,11 +335,21 @@ def api_send_popup():
         return jsonify({"error": "Event queue not available"}), 500
     
     data = request.json
-    data['popup_id'] = str(uuid.uuid4())
-    logger.debug(f"Creating new popup with data: {data}")
+    room_ids = data.get("room_ids", [])
+    if not room_ids:
+        return jsonify({"error": "room_ids must be a non-empty list"}), 400
 
-    popup_event = Event(type="manual_popup", payload=data)
-    asyncio.run_coroutine_threadsafe(event_queue.put(popup_event), loop)
+    # Generate one event per room to keep logic simple downstream
+    for room_id in room_ids:
+        popup_payload = {
+            "id": str(uuid.uuid4()),
+            "room_id": room_id,
+            "message": data.get("message"),
+            "duration": data.get("duration", 15)
+        }
+        popup_event = Event(type="manual_popup", payload=popup_payload)
+        asyncio.run_coroutine_threadsafe(event_queue.put(popup_event), loop)
+
     return jsonify({"status": "ok"})
 
 @app.route('/api/trigger_action', methods=['POST'])
