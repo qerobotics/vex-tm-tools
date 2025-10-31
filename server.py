@@ -119,14 +119,18 @@ def login():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
+        logging.debug(f"Login attempt for user: {username}")
         auth_result = userManager.Auth(username, password)
         
         if auth_result['user']:
-            session['user'] = auth_result['user'].__dict__
+            user_dict = auth_result['user'].__dict__
+            session['user'] = user_dict
+            logging.debug(f"User '{username}' logged in, session set to: {user_dict}")
             flash('Logged in successfully.', 'success')
             next_page = request.args.get('next')
             return redirect(next_page or url_for('index'))
         else:
+            logging.warning(f"Login failed for user '{username}': {auth_result['message']}")
             flash(auth_result['message'], 'danger')
     
     return render_template('login.html')
@@ -564,13 +568,30 @@ def profile():
 
         # Change password
         try:
-            userManager.ChangePassword(username, new_password)
+            userManager.changePassword(username, new_password)
             flash('Password updated successfully.', 'success')
             return redirect(url_for('profile'))
         except Exception as e:
             flash(f'An error occurred: {e}', 'danger')
 
-    return render_template('profile.html')
+    email = session['user'].get('email')
+    return render_template('profile.html', email=email)
+
+@app.route('/profile/email', methods=['POST'])
+@login_required()
+def profile_email():
+    new_email = request.form['new_email']
+    username = session['user']['userName']
+    try:
+        userManager.changeEmail(username, new_email)
+        # Update email in session
+        user_data = session['user']
+        user_data['email'] = new_email
+        session['user'] = user_data
+        flash('Email updated successfully.', 'success')
+    except Exception as e:
+        flash(f'An error occurred: {e}', 'danger')
+    return redirect(url_for('profile'))
 
 
 if __name__ == "__main__":

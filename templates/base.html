@@ -244,14 +244,17 @@
       <li class="dropdown">
         <a href="#" class="dropdown-toggle" title="Rooms" style="font-size: 1.5rem; padding-top: 14px; padding-bottom: 14px;"><i class="ri-door-open-line"></i></a>
         <div class="dropdown-content" id="room-management-dropdown">
+            {% if 'user' in session %} 
             <a href="{{ url_for('room_management') }}">Manage Rooms</a>
             <div class="dropdown-divider"></div>
+            {% endif %}
             <div class="dropdown-header">Open Room</div>
             <div id="room-links-container">
                 <!-- Dynamic room links will be inserted here -->
             </div>
         </div>
       </li>
+      {% if 'user' in session %} 
       <div class="dropdown">
           <a href="#" class="dropdown-toggle" title="Tools" style="font-size: 1.5rem; padding-top: 14px; padding-bottom: 14px;"><i class="ri-tools-line"></i></a>
           <div class="dropdown-content">
@@ -261,15 +264,20 @@
               <a href="{{ url_for('event_simulator_page') }}">Event Simulator</a>
           </div>
       </div>
-      <ul>
-        {% if 'user' in session %}
-        {% endif %}
-      </ul>
+      {% endif %}
       <div class="user-menu-wrapper">
         <div class="dropdown">
-          <a href="#" class="user-icon" style="font-size: 1.5rem; padding-top: 14px; padding-bottom: 14px;"><i class="ri-account-circle-line"></i></a>
+          <a href="#" class="user-icon" style="font-size: 1.5rem; padding-top: 14px; padding-bottom: 14px;">
+            {% if 'user' in session and session.user.avatar %}
+              <img src="{{ session.user.avatar }}" alt="Avatar" style="width: 24px; height: 24px; border-radius: 50%;">
+            {% else %}
+              <i class="ri-account-circle-line"></i>
+            {% endif %}
+          </a>
           <div class="dropdown-content">
             {% if 'user' in session %}
+              <div class="dropdown-header">Hello, {{ session.user.userName }}</div>
+              <div class="dropdown-divider"></div>
               <a href="{{ url_for('profile') }}">Profile</a>
               <a href="{{ url_for('logout') }}">Logout</a>
             {% else %}

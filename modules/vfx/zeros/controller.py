@@ -54,7 +54,7 @@ if __name__ == '__main__':
         if zeros_controller.client:
             print("ZerOS controller initialized.")
             
-            # Example: Fire cue 1 (standby)
+            # Example: Fire cue 13 (standby)
             action1 = LightingAction(preset_id=13)
             zeros_controller.execute_action(action1)
             
