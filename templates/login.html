@@ -27,11 +27,15 @@
         {% endif %}
       {% endwith %}
 
-      <label for="username"><b>Username</b></label>
-      <input id="username" name="username" type="text" placeholder="Enter Username" value="{{ username|default('')|e }}" required>
+      <div class="form-group">
+        <label for="username"><b>Username</b></label>
+        <input id="username" name="username" type="text" placeholder="Enter Username" value="{{ username|default('')|e }}" required>
+      </div>
 
-      <label for="password"><b>Password</b></label>
-      <input id="password" name="password" type="password" placeholder="Enter Password" required>
+      <div class="form-group">
+        <label for="password"><b>Password</b></label>
+        <input id="password" name="password" type="password" placeholder="Enter Password" required>
+      </div>
 
       <div class="but-row">
         <button type="submit">Login</button>

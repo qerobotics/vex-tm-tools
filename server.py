@@ -137,26 +137,87 @@ def logout():
     flash('You have been logged out.', 'info')
     return redirect(url_for('index'))
 
-@app.route('/config', methods=['GET', 'POST'])
+@app.route('/config_editor')
 @login_required(role="admin")
-def config_page():
+def config_editor_page():
     """
-    Page for viewing and editing config.json.
+    Serves the configuration editor page.
     """
-    if request.method == 'POST':
-        try:
-            new_config_str = request.form['config']
-            new_config_data = json.loads(new_config_str)
-            _atomic_write(CONFIG_FILE, new_config_data)
-            return redirect(url_for('config_page'))
-        except json.JSONDecodeError:
-            return "Invalid JSON provided", 400
-        except Exception as e:
-            logger.error(f"Error saving config: {e}")
-            return "Error saving configuration", 500
+    return render_template('config_editor.html')
 
-    config_data = _read_json(CONFIG_FILE, default={})
-    return render_template('config.html', config=json.dumps(config_data, indent=4))
+@app.route('/api/storage_files')
+@login_required(role="admin")
+def list_storage_files():
+    """
+    API endpoint to list all .json files in the storage directory.
+    """
+    try:
+        files = [f for f in os.listdir(STORAGE_PATH) if f.endswith('.json')]
+        return jsonify(files)
+    except FileNotFoundError:
+        return jsonify([])
+
+@app.route('/api/storage_file_content')
+@login_required(role="admin")
+def get_storage_file_content():
+    """
+    API endpoint to get the content of a specific file in the storage directory.
+    """
+    file_name = request.args.get('file')
+    if not file_name or not file_name.endswith('.json'):
+        return "Invalid file name", 400
+
+    # Security check: ensure the file is directly within the STORAGE_PATH
+    file_path = os.path.join(STORAGE_PATH, os.path.basename(file_name))
+    if not os.path.abspath(file_path).startswith(os.path.abspath(STORAGE_PATH)):
+        return "Directory traversal attempt detected", 403
+
+    try:
+        with open(file_path, 'r') as f:
+            # We return as plain text to preserve formatting in the textarea
+            return f.read()
+    except FileNotFoundError:
+        return "File not found", 404
+    except Exception as e:
+        logger.error(f"Error reading file {file_name}: {e}")
+        return "Error reading file", 500
+
+@app.route('/api/save_storage_file', methods=['POST'])
+@login_required(role="admin")
+def save_storage_file():
+    """
+    API endpoint to save content to a specific file in the storage directory.
+    """
+    data = request.get_json()
+    file_name = data.get('file')
+    content = data.get('content')
+
+    if not file_name or not file_name.endswith('.json') or content is None:
+        return jsonify({"error": "Invalid request. 'file' and 'content' are required."}), 400
+
+    # Security check
+    file_path = os.path.join(STORAGE_PATH, os.path.basename(file_name))
+    if not os.path.abspath(file_path).startswith(os.path.abspath(STORAGE_PATH)):
+        return jsonify({"error": "Directory traversal attempt detected"}), 403
+
+    try:
+        # Validate that the content is valid JSON before writing
+        json.loads(content)
+        # Use _atomic_write with the raw string content
+        # We need to modify _atomic_write to handle string data or do it here
+        temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(file_path))
+        with os.fdopen(temp_fd, 'w') as temp_f:
+            temp_f.write(content)
+        os.rename(temp_path, file_path)
+        logger.info(f"Successfully wrote to {file_path}")
+        
+        return jsonify({"status": "ok"})
+    except json.JSONDecodeError:
+        return jsonify({"error": "Invalid JSON format. Please correct it and try again."}), 400
+    except Exception as e:
+        logger.error(f"Failed to save file {file_name}: {e}")
+        return jsonify({"error": "An internal error occurred while saving the file."}), 500
+
 
 @app.route('/pause', methods=['GET', 'POST'])
 @login_required(role="admin")
@@ -385,25 +446,81 @@ def api_trigger_action():
     asyncio.run_coroutine_threadsafe(event_queue.put(action_event), loop)
     return jsonify({"status": "ok"})
 
-@app.route('/api/simulate_event', methods=['POST'])
-def api_simulate_event():
+@app.route('/simulator')
+@login_required(role="admin")
+def event_simulator_page():
+    """
+    Serves the event simulator page.
+    """
+    return render_template('event_simulator.html')
+
+@app.route('/api/simulate_event_from_web', methods=['POST'])
+@login_required(role="admin")
+def api_simulate_event_from_web():
+    """
+    Endpoint to receive simulation requests from the web UI.
+    This is kept separate from the main `simulate_event` to allow for different auth/validation.
+    """
     if not event_queue or not loop:
         return jsonify({"error": "Event queue not available"}), 500
         
     data = request.json
-    # Basic validation
-    if 'type' not in data or 'field' not in data:
-        return jsonify({"error": "Request must include 'type' and 'field'"}), 400
+    event_type = data.get('event_type')
+    field = data.get('field')
+    match_name = data.get('match')
+    round_val = data.get('round')
+    display = data.get('display')
 
-    event = Event(
-        type=data['type'],
-        field=data['field'],
-        payload=data.get('payload', {})
-    )
+    if not event_type:
+        return jsonify({"error": "event_type is required"}), 400
+
+    # This logic is adapted from tools/simulate_event.py
+    # If we are starting a match, we should first assign it to the field
+    if event_type == "matchStarted" and match_name and field:
+        assign_payload = {
+            "type": "fieldMatchAssigned",
+            "field": int(field),
+            "payload": {
+                "match": {
+                    "division": 1,
+                    "session": 0,
+                    "round": round_val or "QUAL",
+                    "match": int(''.join(filter(str.isdigit, match_name))),
+                    "instance": 1
+                }
+            }
+        }
+        assign_event = Event.from_dict(assign_payload)
+        asyncio.run_coroutine_threadsafe(event_queue.put(assign_event), loop)
+
+    # Construct the payload for the main event
+    main_payload = {
+        "type": event_type,
+        "payload": {}
+    }
+
+    if field:
+        main_payload["field"] = int(field)
+
+    if (event_type == "fieldMatchAssigned" or event_type == "fieldAssigned") and match_name:
+        main_payload["type"] = "fieldMatchAssigned"
+        main_payload["payload"]["match"] = {
+            "division": 1,
+            "session": 0,
+            "round": round_val or "QUAL",
+            "match": int(''.join(filter(str.isdigit, match_name))),
+            "instance": 1
+        }
+    elif event_type == "audienceDisplayChanged" and display:
+        main_payload["payload"]["display"] = display
+    elif match_name and event_type not in ["matchStarted", "fieldMatchAssigned", "audienceDisplayChanged"]:
+        main_payload["payload"]["match"] = match_name
+
+    main_event = Event.from_dict(main_payload)
+    asyncio.run_coroutine_threadsafe(event_queue.put(main_event), loop)
     
-    asyncio.run_coroutine_threadsafe(event_queue.put(event), loop)
-    logger.info(f"Successfully queued simulated event: {event.to_json()}")
-    return jsonify({"status": "ok", "event": event.to_dict()})
+    logger.info(f"Successfully queued simulated event from web: {main_event.to_json()}")
+    return jsonify({"status": "ok", "event_sent": main_event.to_dict()})
 
 @app.route('/profile', methods=['GET', 'POST'])
 @login_required()

@@ -191,7 +191,8 @@
             if (Object.keys(rooms).length > 0) {
                 for (const roomId in rooms) {
                     const label = document.createElement('label');
-                    label.innerHTML = `<input type="checkbox" value="${roomId}"> ${roomId}`;
+                    label.className = 'checkbox-label';
+                    label.innerHTML = `<input type="checkbox" value="${roomId}"> <span>${roomId}</span>`;
                     roomSelectionDiv.appendChild(label);
                 }
             } else {

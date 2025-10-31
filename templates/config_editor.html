@@ -1,0 +1,137 @@
+{% extends 'base.html' %}
+
+{% block title %}Configuration Editor{% endblock %}
+
+{% block content %}
+<section>
+    <h1>Configuration Editor</h1>
+    <p class="muted">Select a JSON file from the storage directory to edit its contents.</p>
+
+    <div class="card">
+        <div class="card-body">
+            <div class="form-group">
+                <label for="file-selector">Select File</label>
+                <select id="file-selector" name="file-selector">
+                    <option value="">-- Please choose a file --</option>
+                </select>
+            </div>
+
+            <form id="editor-form" style="display: none;">
+                <div class="form-group">
+                    <label for="file-content">File Content</label>
+                    <div id="editor" style="height: 400px; border-radius: 6px;"></div>
+                </div>
+                <button type="submit">Save Changes</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="response-message" style="display: none; margin-top: 1rem;"></div>
+</section>
+
+<style>
+    #file-content {
+        font-family: 'Courier New', Courier, monospace;
+        background-color: #0f1724;
+        color: var(--fg);
+        border: 1px solid var(--surface);
+        border-radius: 6px;
+        width: 100%;
+        box-sizing: border-box;
+    }
+</style>
+
+<script src="https://cdn.jsdelivr.net/npm/ace-builds@1.33.0/src-noconflict/ace.min.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const fileSelector = document.getElementById('file-selector');
+    const editorForm = document.getElementById('editor-form');
+    const responseMessage = document.getElementById('response-message');
+    let currentFile = '';
+
+    // Initialize Ace Editor
+    const editor = ace.edit("editor");
+    editor.setTheme("ace/theme/tomorrow_night_eighties");
+    editor.session.setMode("ace/mode/json");
+    editor.setOptions({
+        fontSize: "14px",
+        useSoftTabs: true,
+        tabSize: 4,
+        wrap: true,
+    });
+
+    // Fetch the list of files and populate the dropdown
+    fetch('/api/storage_files')
+        .then(response => response.json())
+        .then(files => {
+            files.forEach(file => {
+                const option = document.createElement('option');
+                option.value = file;
+                option.textContent = file;
+                fileSelector.appendChild(option);
+            });
+        });
+
+    // Handle file selection
+    fileSelector.addEventListener('change', function() {
+        currentFile = this.value;
+        if (currentFile) {
+            fetch(`/api/storage_file_content?file=${encodeURIComponent(currentFile)}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Failed to load file content.');
+                    }
+                    return response.text();
+                })
+                .then(content => {
+                    editor.setValue(content, -1); // -1 moves cursor to the start
+                    editorForm.style.display = 'block';
+                    responseMessage.style.display = 'none';
+                })
+                .catch(error => {
+                    showMessage(error.message, 'error');
+                    editorForm.style.display = 'none';
+                });
+        } else {
+            editorForm.style.display = 'none';
+        }
+    });
+
+    // Handle form submission
+    editorForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const content = editor.getValue();
+
+        fetch('/api/save_storage_file', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                file: currentFile,
+                content: content,
+            }),
+        })
+        .then(response => {
+            if (!response.ok) {
+                return response.json().then(err => { throw new Error(err.error || 'Failed to save file.'); });
+            }
+            return response.json();
+        })
+        .then(data => {
+            showMessage('File saved successfully!', 'success');
+        })
+        .catch(error => {
+            showMessage(error.message, 'error');
+        });
+    });
+
+    function showMessage(message, type) {
+        responseMessage.textContent = message;
+        responseMessage.className = `alert alert-${type === 'success' ? 'info' : 'error'}`;
+        responseMessage.style.display = 'block';
+    }
+});
+</script>
+{% endblock %}

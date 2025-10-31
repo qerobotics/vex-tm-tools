@@ -49,36 +49,176 @@
   }
 
   /* Header / nav */
-  header{background: rgba(11,17,38,0.6); backdrop-filter: blur(6px);}
-  header ul{list-style:none;margin:0;padding:0;display:flex;gap:.25rem;align-items:center}
+  header{background: rgba(11,17,38,0.6); backdrop-filter: blur(6px); padding: 0 1rem;}
+  header nav{max-width:920px;margin:0 auto; display: flex; align-items: center;}
+  header ul{list-style:none;margin:0;padding:0;display:flex;gap:.5rem;justify-content:center; flex-grow: 1;}
   header li{display:inline-block}
-  header a{display:block;padding:12px 16px;text-decoration:none;color:var(--fg);border-radius:6px}
-  header a:hover{background:rgba(122,162,247,0.06)}
-  header .active{background:var(--secondary);color:var(--bg)}
+  header a{display:block;padding:16px 12px;text-decoration:none;color:var(--muted);border-bottom:2px solid transparent; transition: all 0.2s ease-in-out;}
+  header a:hover{color:var(--fg)}
+  header .active{color:var(--primary); border-bottom-color: var(--primary); font-weight: 600;}
+  header .home-icon.active { border-bottom-color: transparent; }
+
+  /* Dropdown for user menu */
+  .dropdown { position: relative; display: inline-block; }
+  .dropdown-content {
+    display: none;
+    position: absolute;
+    right: 0;
+    background-color: var(--surface);
+    min-width: 160px;
+    box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+    z-index: 1;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.06);
+    padding: .5rem;
+  }
+  .dropdown-content a {
+    color: var(--fg);
+    padding: 8px 12px;
+    text-decoration: none;
+    display: block;
+    border-radius: 4px;
+    border-bottom: none;
+  }
+  .dropdown-content a:hover { background-color: rgba(122,162,247,0.06); }
+  .dropdown:hover .dropdown-content { display: block; }
+  .user-menu-wrapper { margin-left: auto; }
+
+  .dropdown-header {
+    padding: 8px 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+  .dropdown-divider {
+    height: 1px;
+    margin: .5rem 0;
+    overflow: hidden;
+    background-color: rgba(255,255,255,0.06);
+  }
 
   /* Main content area */
   main{max-width:920px;margin:2rem auto;padding:1.25rem}
 
-  /* Forms: a clean, accessible set of styles used by auth pages */
+  /* Forms & Inputs */
   form{background:rgba(255,255,255,0.02);padding:1rem;border-radius:8px;border:1px solid rgba(255,255,255,0.03)}
-  .imgcontainer{text-align:center;margin:1rem 0}
-  /* Larger avatar for better visibility; responsive cap applies below */
-  img.avatar{width:180px;max-width:40%;border-radius:50%;box-shadow:0 6px 28px rgba(0,0,0,0.45)}
-  .container{padding:8px}
+  .form-group { margin-bottom: 1rem; }
+  .form-group label { display: block; margin-bottom: .5rem; font-weight: 500; }
 
-  input[type=text], input[type=password], input[type=email] {
-    width:100%;padding:10px 12px;margin:8px 0;border-radius:6px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);color:var(--fg);
+  input[type=text], input[type=password], input[type=email], input[type=number], input[type=url], input[type=search], select, textarea {
+    width: 100%;
+    padding: 10px 12px;
+    margin: 0;
+    border-radius: 6px;
+    border: 1px solid var(--surface);
+    background: rgba(255,255,255,0.02);
+    color: var(--fg);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    box-sizing: border-box;
+  }
+  input:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(122, 162, 247, 0.2);
   }
 
-  button {
+  /* Checkboxes */
+  .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+  input[type="checkbox"] {
+    -webkit-appearance: none;
+    appearance: none;
+    background-color: var(--surface);
+    margin: 0;
+    font: inherit;
+    color: currentColor;
+    width: 1.15em;
+    height: 1.15em;
+    border: 1px solid var(--muted);
+    border-radius: 4px;
+    display: grid;
+    place-content: center;
+    cursor: pointer;
+  }
+  input[type="checkbox"]::before {
+    content: "";
+    width: 0.65em;
+    height: 0.65em;
+    transform: scale(0);
+    transition: 120ms transform ease-in-out;
+    box-shadow: inset 1em 1em var(--primary);
+    transform-origin: bottom left;
+    clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+  }
+  input[type="checkbox"]:checked::before {
+    transform: scale(1);
+  }
+
+  /* Buttons */
+  button, .btn {
     background-color: var(--primary);
     color: var(--bg);
-    border: none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:600
+    border: none;
+    padding: 10px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    text-decoration: none;
+    display: inline-block;
+    transition: background-color 0.2s ease, transform 0.1s ease;
   }
-  .cancelbtn{background:var(--danger);color:var(--bg)}
-  .but-row{display:flex;gap:.5rem}
+  button:hover, .btn:hover {
+    filter: brightness(1.1);
+  }
+  button:active, .btn:active {
+    transform: scale(0.98);
+  }
+
+  .btn-secondary { background-color: var(--surface); color: var(--fg); border: 1px solid var(--muted); }
+  .btn-danger, .cancelbtn { background: var(--danger); color: var(--bg); }
+  .but-row { display: flex; gap: .5rem; }
 
   .muted{color:var(--muted);font-size:.95rem}
+
+  /* Card styles */
+  .card {
+    background: var(--surface);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 8px;
+    margin-bottom: 1rem;
+  }
+  .card-header {
+    padding: .75rem 1.25rem;
+    margin-bottom: 0;
+    background-color: rgba(255,255,255,0.03);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-radius: 8px 8px 0 0;
+    font-weight: 600;
+  }
+  .card-body {
+    padding: 1.25rem;
+  }
+
+  /* List group styles */
+  .list-group {
+    padding-left: 0;
+    margin-bottom: 0;
+  }
+  .list-group-item {
+    position: relative;
+    display: block;
+    padding: .75rem 1.25rem;
+    background-color: transparent;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .list-group-item:last-child {
+    border-bottom: none;
+  }
 
   /* Alerts and messages */
   .alert{padding:10px 12px;border-radius:6px;margin-bottom:0.75rem}
@@ -100,35 +240,44 @@
   -->
   <header>
     <nav>
+      <a href="{{ url_for('index') }}" class="home-icon {{ 'active' if request.path == url_for('index') else '' }}" style="font-size: 1.5rem; padding-top: 14px; padding-bottom: 14px;"><i class="ri-home-line"></i></a>
+      <li class="dropdown">
+        <a href="#" class="dropdown-toggle" title="Rooms" style="font-size: 1.5rem; padding-top: 14px; padding-bottom: 14px;"><i class="ri-door-open-line"></i></a>
+        <div class="dropdown-content" id="room-management-dropdown">
+            <a href="{{ url_for('room_management') }}">Manage Rooms</a>
+            <div class="dropdown-divider"></div>
+            <div class="dropdown-header">Open Room</div>
+            <div id="room-links-container">
+                <!-- Dynamic room links will be inserted here -->
+            </div>
+        </div>
+      </li>
+      <div class="dropdown">
+          <a href="#" class="dropdown-toggle" title="Tools" style="font-size: 1.5rem; padding-top: 14px; padding-bottom: 14px;"><i class="ri-tools-line"></i></a>
+          <div class="dropdown-content">
+                <a href="{{ url_for('config_editor_page') }}">Configuration Editor</a>
+                <a href="{{ url_for('pause_controls') }}">Pause Controls</a>
+              <a href="{{ url_for('controls_page') }}">Manual Controls</a>
+              <a href="{{ url_for('event_simulator_page') }}">Event Simulator</a>
+          </div>
+      </div>
       <ul>
-        <li>
-          <a href="{{ url_for('index') }}" class="{{ 'active' if request.path == url_for('index') else '' }}">Home</a>
-        </li>
         {% if 'user' in session %}
-          <li>
-            <a href="{{ url_for('config_page') }}" class="{{ 'active' if request.path == url_for('config_page') else '' }}">Configuration</a>
-          </li>
-          <li>
-            <a href="{{ url_for('pause_controls') }}" class="{{ 'active' if request.path == url_for('pause_controls') else '' }}">Pause Controls</a>
-          </li>
-          <li>
-            <a href="{{ url_for('room_management') }}" class="{{ 'active' if request.path == url_for('room_management') else '' }}">Room Management</a>
-          </li>
-          <li>
-            <a href="{{ url_for('controls_page') }}" class="{{ 'active' if request.path == url_for('controls_page') else '' }}">Manual Controls</a>
-          </li>
-          <li>
-            <a href="{{ url_for('profile') }}" class="{{ 'active' if request.path == url_for('profile') else '' }}">Profile</a>
-          </li>
-          <li>
-            <a href="{{ url_for('logout') }}" class="{{ 'active' if request.path == url_for('logout') else '' }}">Logout</a>
-          </li>
-        {% else %}
-          <li>
-            <a href="{{ url_for('login') }}" class="{{ 'active' if request.path == url_for('login') else '' }}">Login</a>
-          </li>
         {% endif %}
       </ul>
+      <div class="user-menu-wrapper">
+        <div class="dropdown">
+          <a href="#" class="user-icon" style="font-size: 1.5rem; padding-top: 14px; padding-bottom: 14px;"><i class="ri-account-circle-line"></i></a>
+          <div class="dropdown-content">
+            {% if 'user' in session %}
+              <a href="{{ url_for('profile') }}">Profile</a>
+              <a href="{{ url_for('logout') }}">Logout</a>
+            {% else %}
+              <a href="{{ url_for('login') }}">Login</a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
     </nav>
   </header>
 
@@ -137,5 +286,32 @@
     {% block content %}{% endblock %}
   </main>
 
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        fetch('/api/config')
+            .then(response => response.json())
+            .then(data => {
+                const rooms = data.rooms || {};
+                const roomContainer = document.getElementById('room-links-container');
+                roomContainer.innerHTML = ''; // Clear existing
+                if (Object.keys(rooms).length > 0) {
+                    for (const roomId in rooms) {
+                        const link = document.createElement('a');
+                        link.href = `/room/${roomId}`;
+                        link.textContent = `Room ${roomId}`;
+                        roomContainer.appendChild(link);
+                    }
+                } else {
+                    const noRooms = document.createElement('span');
+                    noRooms.textContent = 'No rooms available';
+                    noRooms.style.padding = '8px 12px';
+                    noRooms.style.display = 'block';
+                    noRooms.style.color = 'var(--muted)';
+                    roomContainer.appendChild(noRooms);
+                }
+            })
+            .catch(error => console.error('Error fetching rooms for navbar:', error));
+    });
+  </script>
 </body>
 </html>

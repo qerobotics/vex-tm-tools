@@ -11,22 +11,53 @@
     </div>
 </section>
 
+<style>
+    .fields-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 1.5rem;
+        margin-top: 1.5rem;
+    }
+
+    .field-card {
+        background: var(--surface);
+        border-radius: 8px;
+        padding: 1.25rem;
+        border-left-width: 5px;
+        border-left-style: solid;
+        transition: all 0.2s ease-in-out;
+    }
+
+    .field-card h2 {
+        margin-top: 0;
+        font-size: 1.5rem;
+    }
+
+    .field-card p {
+        margin: 0.25rem 0;
+    }
+    
+    .field-card .state {
+        font-weight: 600;
+    }
+</style>
+
 <script>
     function getStatusColor(state) {
         switch (state) {
             case 'active':
             case 'matchStarted':
-                return 'var(--color-success)';
+                return 'var(--primary)';
             case 'queued':
             case 'fieldMatchAssigned':
-                return 'var(--color-warning)';
+                return 'var(--accent)';
             case 'finish':
             case 'matchStopped':
-                return 'var(--color-info)';
+                return 'var(--secondary)';
             case 'standby':
-                return 'var(--color-secondary)';
+                return 'var(--muted)';
             default:
-                return 'var(--color-muted)';
+                return 'var(--muted)';
         }
     }
 
