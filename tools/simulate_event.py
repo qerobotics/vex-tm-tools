@@ -8,8 +8,12 @@ def send_request(url, payload):
         response = requests.post(url, json=payload)
         response.raise_for_status()
         
-        print("Successfully sent event:")
-        print(json.dumps(response.json(), indent=2))
+        try:
+            print("Successfully sent event:")
+            print(json.dumps(response.json(), indent=2))
+        except json.JSONDecodeError:
+            print("Received a non-JSON response from the server:")
+            print(response.text)
 
     except requests.exceptions.HTTPError as e:
         print(f"HTTP Error: {e.response.status_code} {e.response.reason}")
