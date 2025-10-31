@@ -36,6 +36,7 @@ FIELDS_DIR = os.path.join(STORAGE_PATH, 'fields')
 CONFIG_FILE = os.path.join(STORAGE_PATH, 'config.json')
 SCHEDULED_MATCHES_FILE = os.path.join(STORAGE_PATH, 'scheduled_matches.json')
 POPUPS_FILE = os.path.join(STORAGE_PATH, 'popups.json')
+PRESETS_FILE = os.path.join(STORAGE_PATH, 'presets.json')
 
 def _atomic_write(file_path, data):
     try:
@@ -305,6 +306,26 @@ def api_config():
     """
     config_data = _read_json(CONFIG_FILE, default={})
     return jsonify(config_data)
+
+
+@app.route('/api/presets', methods=['GET', 'POST'])
+@login_required(role="admin")
+def presets_api():
+    """
+    API for managing presets.
+    """
+    if request.method == 'POST':
+        try:
+            new_presets_data = request.get_json()
+            _atomic_write(PRESETS_FILE, new_presets_data)
+            return jsonify({"status": "ok"}), 200
+        except Exception as e:
+            logger.error(f"Error saving presets: {e}")
+            return "Error saving presets", 500
+
+    presets_data = _read_json(PRESETS_FILE, default={"lighting": []})
+    return jsonify(presets_data)
+
 
 @app.route('/api/active_popups')
 def api_active_popups():

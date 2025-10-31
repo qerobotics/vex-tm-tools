@@ -10,26 +10,36 @@
     <div class="quad-grid">
         <!-- Lighting Control Panel -->
         <div class="control-card">
-            <h2><i class="fas fa-lightbulb"></i> Lighting</h2>
-            <div class="preset-grid">
-                {% for i in range(1, 16) %}
-                <button class="preset-btn" onclick="triggerAction('lighting', { preset_id: {{ i }} })">{{ i }}</button>
-                {% endfor %}
+            <h2>
+                <i class="ri-lightbulb-line"></i> Lighting
+                <button id="edit-lighting-btn" class="icon-btn" onclick="toggleLightingEditMode()"><i class="ri-pencil-line"></i></button>
+            </h2>
+            <div class="preset-grid" id="lighting-preset-grid">
+                <!-- Presets will be dynamically inserted here -->
             </div>
             <div class="manual-entry">
                 <input type="number" id="lighting-preset-manual" placeholder="Manual ID">
                 <button onclick="sendManualLighting()">Send</button>
             </div>
+            <div id="lighting-edit-panel" style="display: none;">
+                <h3>Edit Presets</h3>
+                <div class="manual-entry">
+                    <input type="text" id="new-preset-name" placeholder="Preset Name">
+                    <input type="number" id="new-preset-id" placeholder="Preset ID">
+                    <button id="add-preset-btn">Add</button>
+                </div>
+                <p class="muted">In edit mode, click a preset to remove it. Click the edit icon again to save.</p>
+            </div>
         </div>
 
         <!-- Audio Control Panel -->
         <div class="control-card">
-            <h2><i class="fab fa-spotify"></i> Audio</h2>
+            <h2><i class="ri-spotify-line"></i> Audio</h2>
             <div class="quick-actions">
-                <button onclick="triggerAction('audio', { command: 'play' })"><i class="fas fa-play"></i> Play</button>
-                <button onclick="triggerAction('audio', { command: 'pause' })"><i class="fas fa-pause"></i> Pause</button>
-                <button onclick="triggerAction('audio', { command: 'next_track' })"><i class="fas fa-forward"></i> Skip</button>
-                <button onclick="triggerAction('audio', { command: 'previous_track' })"><i class="fas fa-backward"></i> Restart</button>
+                <button onclick="triggerAction('audio', { command: 'play' })"><i class="ri-play-line"></i> Play</button>
+                <button onclick="triggerAction('audio', { command: 'pause' })"><i class="ri-pause-line"></i> Pause</button>
+                <button onclick="triggerAction('audio', { command: 'next_track' })"><i class="ri-skip-forward-line"></i> Skip</button>
+                <button onclick="triggerAction('audio', { command: 'previous_track' })"><i class="ri-rewind-line"></i> Restart</button>
             </div>
             <div class="manual-entry">
                 <input type="text" id="audio-command" placeholder="Manual command">
@@ -40,7 +50,7 @@
 
         <!-- Camera Control Panel -->
         <div class="control-card">
-            <h2><i class="fas fa-video"></i> Camera</h2>
+            <h2><i class="ri-camera-line"></i> Camera</h2>
             <div class="quick-actions">
                 <button onclick="triggerAction('video', { command: 'change_program_input', camera_id: 1 })">Cam 1</button>
                 <button onclick="triggerAction('video', { command: 'change_program_input', camera_id: 2 })">Cam 2</button>
@@ -50,7 +60,7 @@
 
         <!-- Popup Control Panel -->
         <div class="control-card" id="popups-card">
-            <h2><i class="fas fa-comment-alt"></i> Popups</h2>
+            <h2><i class="ri-message-2-line"></i> Popups</h2>
             <div class="manual-entry">
                 <input type="text" id="popup-message" placeholder="Popup Message">
                 <div class="room-selection">
@@ -196,9 +206,109 @@
     document.addEventListener('DOMContentLoaded', () => {
         fetchRooms();
         fetchActivePopups();
+        fetchLightingPresets();
         // Refresh popups every 10 seconds
         setInterval(fetchActivePopups, 10000);
     });
+
+    // --- Lighting Controls ---
+    let lightingPresets = [];
+    let lightingEditMode = false;
+
+    async function fetchLightingPresets() {
+        try {
+            const response = await fetch('/api/presets');
+            const data = await response.json();
+            lightingPresets = data.lighting || [];
+            renderLightingPresets();
+        } catch (error) {
+            console.error("Failed to fetch lighting presets:", error);
+        }
+    }
+
+    function renderLightingPresets() {
+        const grid = document.getElementById('lighting-preset-grid');
+        grid.innerHTML = '';
+        lightingPresets.forEach((preset, index) => {
+            const btn = document.createElement('button');
+            btn.className = 'preset-btn';
+            btn.textContent = preset.name;
+            btn.title = `ID: ${preset.preset_id}`;
+            btn.onclick = () => handlePresetClick(index);
+            grid.appendChild(btn);
+        });
+    }
+
+    function handlePresetClick(index) {
+        if (lightingEditMode) {
+            // Remove preset
+            lightingPresets.splice(index, 1);
+            renderLightingPresets();
+            updateEditModeUI();
+        } else {
+            // Trigger action
+            const preset = lightingPresets[index];
+            triggerAction('lighting', { preset_id: preset.preset_id });
+        }
+    }
+
+    function toggleLightingEditMode() {
+        lightingEditMode = !lightingEditMode;
+        if (!lightingEditMode) {
+            // Save changes
+            saveLightingPresets();
+        }
+        updateEditModeUI();
+    }
+
+    function updateEditModeUI() {
+        const editPanel = document.getElementById('lighting-edit-panel');
+        const grid = document.getElementById('lighting-preset-grid');
+        const editBtnIcon = document.querySelector('#edit-lighting-btn i');
+
+        editPanel.style.display = lightingEditMode ? 'block' : 'none';
+        if (lightingEditMode) {
+            grid.classList.add('edit-mode');
+            editBtnIcon.classList.remove('ri-pencil-line');
+            editBtnIcon.classList.add('ri-save-line');
+            document.querySelectorAll('.preset-btn').forEach(btn => btn.classList.add('remove-mode'));
+        } else {
+            grid.classList.remove('edit-mode');
+            editBtnIcon.classList.remove('ri-save-line');
+            editBtnIcon.classList.add('ri-pencil-line');
+            document.querySelectorAll('.preset-btn').forEach(btn => btn.classList.remove('remove-mode'));
+        }
+    }
+
+    document.getElementById('add-preset-btn').addEventListener('click', () => {
+        const nameInput = document.getElementById('new-preset-name');
+        const idInput = document.getElementById('new-preset-id');
+        const name = nameInput.value.trim();
+        const presetId = parseInt(idInput.value.trim());
+
+        if (name && !isNaN(presetId)) {
+            lightingPresets.push({ name: name, preset_id: presetId });
+            renderLightingPresets();
+            updateEditModeUI();
+            nameInput.value = '';
+            idInput.value = '';
+        } else {
+            alert('Please provide a valid name and ID for the preset.');
+        }
+    });
+
+    async function saveLightingPresets() {
+        try {
+            await fetch('/api/presets', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lighting: lightingPresets })
+            });
+        } catch (error) {
+            console.error('Failed to save lighting presets:', error);
+            alert('Failed to save presets. Check console for details.');
+        }
+    }
 </script>
 
 <style>
@@ -222,21 +332,36 @@
         margin-top: 0;
         border-bottom: 1px solid var(--color-border);
         padding-bottom: 0.5rem;
+        display: flex;
+        align-items: center;
     }
     
-    .control-card h2 .fas, .control-card h2 .fab {
-        margin-right: 0.5rem;
+    .control-card h2 .icon-btn {
+        background: none;
+        border: none;
+        color: var(--color-text-muted);
+        font-size: 0.8em;
+        cursor: pointer;
+        margin-left: auto;
     }
 
     .preset-grid {
         display: grid;
-        grid-template-columns: repeat(5, 1fr);
+        grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
         gap: 0.5rem;
     }
 
     .preset-btn {
         aspect-ratio: 1 / 1;
         font-weight: bold;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    
+    .preset-btn.remove-mode:hover {
+        background-color: var(--color-danger);
+        color: white;
     }
 
     .manual-entry {
