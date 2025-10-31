@@ -102,6 +102,23 @@ class SpotifyController:
                     except spotipy.exceptions.SpotifyException as e:
                         logger.error(f"Could not fetch playlist details to play random track: {e}")
 
+            elif command == "play_track":
+                track_uri = metadata.get("track_uri")
+                start_time_s = metadata.get("start_time_s", 0)
+
+                if not track_uri:
+                    logger.error("play_track command requires 'track_uri' in metadata.")
+                    return
+                
+                # Ensure track_uri is in the correct format
+                if not track_uri.startswith("spotify:track:"):
+                    track_uri = f"spotify:track:{track_uri}"
+
+                start_time_ms = int(start_time_s) * 1000
+                
+                logger.info(f"Playing track {track_uri} starting at {start_time_s}s ({start_time_ms}ms)")
+                self.sp.start_playback(device_id=self.device_id, uris=[track_uri], position_ms=start_time_ms)
+
             elif command == "pause":
                 self.sp.pause_playback(device_id=self.device_id)
             elif command == "next":

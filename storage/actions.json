@@ -1,24 +1,67 @@
 {
     "on_event": {
-        "matchStarted": {
-            "all": [
-                {
-                    "type": "audio",
-                    "command": "play_playlist_track",
-                    "metadata": {
-                        "playlist_uri": "spotify:playlist:5paEjpgpPf5CkhuSHyJ66i"
-                    }
+        "matchStarted": [
+            {
+                "match_name": "Q*",
+                "fields": {
+                    "all": [
+                        {
+                            "type": "audio",
+                            "command": "play_playlist_track",
+                            "metadata": {
+                                "playlist_uri": "spotify:playlist:5paEjpgpPf5CkhuSHyJ66i"
+                            },
+                            "priority": 1
+                        }
+                    ]
                 }
-            ]
-        },
-        "matchStopped": {
-            "all": [
-                {
-                    "type": "audio",
-                    "command": "pause"
+            },
+            {
+                "match_name": "F1",
+                "fields": {
+                    "all": [
+                        {
+                            "type": "audio",
+                            "command": "play_track",
+                            "metadata": {
+                                "track_uri": "spotify:track:08mG3Y1vljYA6bvDt4Wqkj",
+                                "start_time_s": 30
+                            },
+                            "priority": 2
+                        }
+                    ]
                 }
-            ]
-        }
+            },
+            {
+                "match_name": "F*",
+                "fields": {
+                    "all": [
+                        {
+                            "type": "audio",
+                            "command": "play_playlist_track",
+                            "metadata": {
+                                "playlist_uri": "spotify:playlist:37i9dQZF1DX3KVUsNUmJc2"
+                            },
+                            "priority": 1
+                        }
+                    ]
+                }
+            }
+        ],
+        "matchStopped": [
+            {
+                "match_name": "*",
+                "fields": {
+                    "all": [
+                        {
+                            "type": "audio",
+                            "command": "pause",
+                            "priority": 0
+                        }
+                    ]
+                }
+            }
+        ]
     },
     "on_state_change": {}
 }

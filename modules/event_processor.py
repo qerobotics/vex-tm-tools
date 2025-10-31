@@ -201,16 +201,13 @@ class EventProcessor:
             return None
         
         round_val = match_obj.get("round")
-        if not round_val:
+        if not round_val or not isinstance(round_val, str) or len(round_val) == 0:
+            # If round isn't a valid string, we can't generate a prefix.
+            # We could fall back to the match number, but returning None is safer
+            # to indicate that a proper name could not be formed.
             return None
 
-        round_map = {
-            "QUAL": "Q",
-            "ROUND_ROBIN": "RR",
-            # Add other mappings as needed
-        }
-        
-        round_prefix = round_map.get(round_val, "M")
+        round_prefix = round_val[0].upper()
         return f"{round_prefix}{match_obj.get('match', '')}"
 
     def _determine_new_state(self, event, current_state):
@@ -238,21 +235,26 @@ class EventProcessor:
     async def _trigger_actions(self, event, old_state, new_state):
         actions_to_run = []
         field_id = event.field
+        match_name = None
+
+        if field_id:
+            field_state = await self._get_field_state(field_id)
+            match_name = field_state.match_name
         
         # Check for actions based on event type
         actions_to_run.extend(
-            self.action_mappings.get_actions(self.action_mappings.on_event, event.type, field_id)
+            self.action_mappings.get_actions(self.action_mappings.on_event, event.type, field_id, match_name)
         )
 
         # Check for actions based on state change
         if old_state and new_state and old_state != new_state:
             state_transition = f"{old_state}->{new_state}"
             actions_to_run.extend(
-                self.action_mappings.get_actions(self.action_mappings.on_state_change, state_transition, field_id)
+                self.action_mappings.get_actions(self.action_mappings.on_state_change, state_transition, field_id, match_name)
             )
 
         if actions_to_run:
-            logger.info(f"Found {len(actions_to_run)} actions to run for event {event.type} on field {field_id} (state: {old_state}->{new_state})")
+            logger.info(f"Found {len(actions_to_run)} actions to run for event {event.type} on field {field_id} (state: {old_state}->{new_state}, match: {match_name})")
 
         for action_data in actions_to_run:
             await self._execute_action(action_data, event)

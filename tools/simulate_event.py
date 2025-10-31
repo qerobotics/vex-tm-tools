@@ -18,7 +18,7 @@ def send_request(url, payload):
         print(f"Failed to connect to the server at {url}.")
         print(f"Please ensure the main application is running. Error: {e}")
 
-def main(event_type, field=None, match_name=None, display=None, base_url="http://localhost:5000"):
+def main(event_type, field=None, match_name=None, display=None, round_val=None, base_url="http://localhost:5000"):
     """
     Sends a simulated event to the running application.
     """
@@ -34,7 +34,7 @@ def main(event_type, field=None, match_name=None, display=None, base_url="http:/
                 "match": {
                     "division": 1, # Hardcoded for simulation
                     "session": 0,
-                    "round": "QUAL",
+                    "round": round_val or "QUAL",
                     "match": int(''.join(filter(str.isdigit, match_name))),
                     "instance": 1
                 }
@@ -58,7 +58,7 @@ def main(event_type, field=None, match_name=None, display=None, base_url="http:/
         payload["payload"]["match"] = {
             "division": 1, # Hardcoded for simulation
             "session": 0,
-            "round": "QUAL",
+            "round": round_val or "QUAL",
             "match": int(''.join(filter(str.isdigit, match_name))),
             "instance": 1
         }
@@ -76,6 +76,7 @@ if __name__ == "__main__":
     parser.add_argument("event_type", help="The type of event to simulate (e.g., 'matchStarted', 'fieldMatchAssigned', 'audienceDisplayChanged').")
     parser.add_argument("--field", type=int, help="The field ID to associate with the event.")
     parser.add_argument("--match", help="The match name for 'fieldMatchAssigned' or 'matchStarted' (e.g., 'Q21', 'SF1-1').")
+    parser.add_argument("--round", dest="round_val", help="The round type (e.g., 'QUAL', 'ROUND_ROBIN', 'FINALS'). Defaults to 'QUAL'.")
     parser.add_argument("--display", help="The display type for 'audienceDisplayChanged' (e.g., 'IN_MATCH', 'RANKINGS').")
     parser.add_argument("--url", default="http://localhost:5000", help="The base URL of the running application.")
 
@@ -85,4 +86,4 @@ if __name__ == "__main__":
     if args.event_type != 'audienceDisplayChanged' and args.field is None:
         parser.error(f"Event type '{args.event_type}' requires the --field argument.")
 
-    main(args.event_type, args.field, args.match, args.display, args.url)
+    main(args.event_type, args.field, args.match, args.display, args.round_val, args.url)
