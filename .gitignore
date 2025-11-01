@@ -14,3 +14,5 @@ build/
 
 # Ignore storage fields (user-specific field JSON files)
 storage/fields/*
+
+.vscode/
