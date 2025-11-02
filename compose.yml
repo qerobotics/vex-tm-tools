@@ -5,21 +5,25 @@ services:
     command: tunnel --no-autoupdate run --token REDACTED-CLOUDFLARE-TUNNEL-TOKEN
     networks:
       cf:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
     
   vex-tm-manager-tools:
     container_name: vex-tm-manager-tools
-    image: registry.848226.xyz/qe/vex-tm-manager-tools:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     networks:
       cf:
         ipv4_address: 10.65.1.2
     volumes:
-      - "./server:/srv/vtmt"
+      - ".:/srv/vtmt"
 
 
 networks:
   cf:
     name: 'cf'
-    internal: true
     ipam:
      config:
        - subnet: 10.65.1.0/24
