@@ -14,11 +14,6 @@ services:
         ipv4_address: 10.65.1.2
     volumes:
       - "./server:/srv/vtmt"
-    environment:
-      - VEX_TM_CLIENT_ID='some-fake-value'
-      - VEX_TM_CLIENT_SECRET='some-fake-value'
-      - VEX_TM_API_KEY='some-fake-value'
-      - VEX_TM_BASE_URL='https://localhost:4443'
 
 
 networks:

@@ -31,15 +31,20 @@ async def main():
     event_queue = asyncio.Queue()
 
     # --- Load Configuration ---
-    # In a real app, this would come from a config file or environment variables
-    client_id = os.environ.get("VEX_TM_CLIENT_ID")
-    client_secret = os.environ.get("VEX_TM_CLIENT_SECRET")
-    api_key = os.environ.get("VEX_TM_API_KEY")
-    base_url = os.environ.get("VEX_TM_BASE_URL", "http://localhost:8080")
-    field_set_id = int(os.environ.get("VEX_TM_FIELD_SET_ID", 1))
+    # The EventProcessor loads the full config, we'll use that as the source of truth
+    event_processor = EventProcessor(event_queue)
+    config = event_processor.config
+
+    # Get VEX TM API credentials from the loaded config
+    vex_tm_api_config = config.vex_tm_api
+    client_id = vex_tm_api_config.get("client_id")
+    client_secret = vex_tm_api_config.get("client_secret")
+    api_key = vex_tm_api_config.get("api_key")
+    base_url = vex_tm_api_config.get("base_url", "http://localhost:8080")
+    field_set_id = int(os.environ.get("VEX_TM_FIELD_SET_ID", 1)) # This can remain an env var for instance-specific setup
 
     if not all([client_id, client_secret, api_key]):
-        logger.error("Missing required environment variables for VEX TM connection. Please set VEX_TM_CLIENT_ID, VEX_TM_CLIENT_SECRET, and VEX_TM_API_KEY.")
+        logger.error("Missing required VEX TM API configuration in config.json. Please set client_id, client_secret, and api_key under the 'vex_tm_api' key.")
         return
 
     # Share the queue with the Flask app for manual controls
@@ -61,9 +66,6 @@ async def main():
         base_url=base_url,
         field_set_id=field_set_id
     )
-
-    # Thread 2: Event Processor
-    event_processor = EventProcessor(event_queue)
 
     # Thread 3: Schedule Fetcher
     schedule_fetcher = ScheduleFetcher(api_client)
