@@ -4,10 +4,8 @@ services:
     image: cloudflare/cloudflared:latest
     command: tunnel --no-autoupdate run --token REDACTED-CLOUDFLARE-TUNNEL-TOKEN
     networks:
-      cf:
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
+      - cf
+    restart: unless-stopped
     
   vex-tm-manager-tools:
     container_name: vex-tm-manager-tools
@@ -19,7 +17,32 @@ services:
         ipv4_address: 10.65.1.2
     volumes:
       - ".:/srv/vtmt"
+    restart: unless-stopped
 
+  tailscale:
+    container_name: tailscale
+    image: tailscale/tailscale:latest
+    hostname: docker-router # Sets the machine name in the Tailscale admin panel
+    environment:
+      # Generate an auth key from your Tailscale admin console
+      - TS_AUTHKEY=tskey-auth-YOUR-KEY-HERE
+      # Advertise the Docker network as a subnet route
+      - TS_ROUTES=10.65.1.0/24
+    volumes:
+      # Persists Tailscale state so you don't have to re-auth on restart
+      - ./tailscale-state:/var/lib/tailscale
+      # Required for Tailscale to work
+      - /dev/net/tun:/dev/net/tun
+    cap_add: # Required for routing
+      - net_admin
+      - sys_module
+    # This enables IP forwarding, which is the "bridge"
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv6.conf.all.forwarding=1
+    networks:
+      - cf
+    restart: unless-stopped
 
 networks:
   cf:
