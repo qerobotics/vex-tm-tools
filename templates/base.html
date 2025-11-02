@@ -244,7 +244,7 @@
       <li class="dropdown">
         <a href="#" class="dropdown-toggle" title="Rooms" style="font-size: 1.5rem; padding-top: 14px; padding-bottom: 14px;"><i class="ri-door-open-line"></i></a>
         <div class="dropdown-content" id="room-management-dropdown">
-            {% if 'user' in session %} 
+            {% if 'user' in session and session.user.role in ['admin', 'owner'] %}
             <a href="{{ url_for('room_management') }}">Manage Rooms</a>
             <div class="dropdown-divider"></div>
             {% endif %}
@@ -254,14 +254,22 @@
             </div>
         </div>
       </li>
-      {% if 'user' in session %} 
+      {% if 'user' in session %}
       <div class="dropdown">
           <a href="#" class="dropdown-toggle" title="Tools" style="font-size: 1.5rem; padding-top: 14px; padding-bottom: 14px;"><i class="ri-tools-line"></i></a>
           <div class="dropdown-content">
+              {% if session.user.role in ['admin', 'owner'] %}
                 <a href="{{ url_for('config_editor_page') }}">Configuration Editor</a>
                 <a href="{{ url_for('pause_controls') }}">Pause Controls</a>
-              <a href="{{ url_for('controls_page') }}">Manual Controls</a>
-              <a href="{{ url_for('event_simulator_page') }}">Event Simulator</a>
+              {% endif %}
+              {% if session.user.role in ['admin', 'owner', 'av'] %}
+                <a href="{{ url_for('controls_page') }}">Manual Controls</a>
+              {% endif %}
+              {% if session.user.role in ['admin', 'owner'] %}
+                <a href="{{ url_for('event_simulator_page') }}">Event Simulator</a>
+                <a href="{{ url_for('manage_users_page') }}">Manage Users</a>
+                <a href="{{ url_for('logs_page') }}">Server Logs</a>
+              {% endif %}
           </div>
       </div>
       {% endif %}

@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block title %}{{ error_code }} - Error{% endblock %}
+
+{% block content %}
+<div style="text-align: center; padding: 4rem 0;">
+  <h1 style="font-size: 4rem; margin-bottom: 1rem;">{{ error_code }}</h1>
+  <p style="font-size: 1.25rem; color: var(--muted);">{{ error_message }}</p>
+  <p style="margin-top: 2rem;">
+    <a href="{{ url_for('index') }}" class="btn">Go to Homepage</a>
+  </p>
+</div>
+{% endblock %}

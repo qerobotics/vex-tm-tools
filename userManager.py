@@ -1,6 +1,7 @@
 import os
 import hashlib
 import logging
+import shutil
 try:
     # Force use of Werkzeug for password helpers. If Werkzeug is not available,
     # fail fast with an informative error so the environment can be configured.
@@ -124,6 +125,58 @@ class UserManager:
         if email:
             fields.append(email)
         self._write_user(userName, fields)
+
+    def list_users(self):
+        """Returns a list of all users."""
+        users = []
+        user_info_dir = 'storage/userInfo'
+        if not os.path.isdir(user_info_dir):
+            return users
+        
+        for username in os.listdir(user_info_dir):
+            user_dir = os.path.join(user_info_dir, username)
+            if os.path.isdir(user_dir):
+                userData = self._read_user(username)
+                if userData and len(userData) >= 3:
+                    role = userData[2]
+                    email = userData[3] if len(userData) > 3 else None
+                    users.append(User(username, '', role, email))
+        return sorted(users, key=lambda u: u.userName)
+
+    def update_user(self, username, role, email):
+        """Updates a user's role and email, preventing modification of owners."""
+        logging.debug(f"Attempting to update user '{username}' with role='{role}' and email='{email}'")
+        userData = self.getDetails(username)
+        if not userData:
+            raise FileNotFoundError('User not found')
+
+        # Prevent owners from being modified
+        if userData[2] == 'owner':
+            raise PermissionError("Owner accounts cannot be modified.")
+        
+        # [username, password_hash, role, email]
+        new_fields = [userData[0], userData[1], role]
+        if len(userData) > 3:
+            new_fields.append(email)
+        elif email:
+             new_fields.append(email)
+
+        self._write_user(username, new_fields)
+        logging.info(f"Successfully updated user '{username}'")
+
+    def delete_user(self, username):
+        """Deletes a user, preventing deletion of owners."""
+        userData = self.getDetails(username)
+        if userData and userData[2] == 'owner':
+            raise PermissionError("Owner accounts cannot be deleted.")
+
+        user_dir = os.path.join('storage/userInfo', username)
+        if os.path.isdir(user_dir):
+            shutil.rmtree(user_dir)
+            logging.info(f"Deleted user '{username}'")
+            return True
+        logging.warning(f"Attempted to delete non-existent user '{username}'")
+        return False
 
     def getDetails(self, userName):
         """Return the user data fields or False if not present."""

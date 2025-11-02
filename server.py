@@ -6,6 +6,11 @@ import logging
 import tempfile
 from functools import wraps
 import uuid
+import queue
+from flask import Response
+import time
+import requests
+import traceback
 
 from models.fields import FieldState
 from models.config import Config
@@ -22,8 +27,104 @@ def set_event_queue(queue, main_loop):
     event_queue = queue
     loop = main_loop
 
+# Create a queue to hold log records
+log_queue = queue.Queue()
+
+class QueueLogHandler(logging.Handler):
+    def __init__(self, log_queue):
+        super().__init__()
+        self.log_queue = log_queue
+
+    def emit(self, record):
+        self.log_queue.put(self.format(record))
+
 # Configure logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Keep the existing basicConfig, but also add our queue handler
+queue_handler = QueueLogHandler(log_queue)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+queue_handler.setFormatter(formatter)
+logging.getLogger().addHandler(queue_handler)
+
+def send_ntfy_notification(title, message, priority="high", tags="rotating_light"):
+    """Helper function to send a notification to the configured ntfy endpoint."""
+    logging.debug("Attempting to send ntfy notification...")
+    try:
+        config_data = _read_json(CONFIG_FILE, default={})
+        ntfy_endpoint = config_data.get("ntfy_error_endpoint")
+        ntfy_user = config_data.get("ntfy_user")
+        ntfy_pass = config_data.get("ntfy_pass")
+
+        if not ntfy_endpoint:
+            logging.warning("ntfy_error_endpoint is not configured. Skipping notification.")
+            return
+
+        logging.debug(f"ntfy endpoint: {ntfy_endpoint}")
+        auth = None
+        if ntfy_user and ntfy_pass:
+            auth = (ntfy_user, ntfy_pass)
+            logging.debug("Using ntfy authentication.")
+
+        response = requests.post(
+            ntfy_endpoint,
+            data=message.encode(encoding='utf-8'),
+            headers={"Title": title, "Priority": priority, "Tags": tags},
+            timeout=10, # Increased timeout
+            auth=auth
+        )
+        
+        if response.status_code == 200:
+            logging.info(f"Successfully sent notification to ntfy endpoint: {ntfy_endpoint}")
+        else:
+            logging.error(f"Failed to send ntfy notification. Status: {response.status_code}, Response: {response.text}")
+
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Failed to send ntfy notification due to a network error: {e}")
+    except Exception as e:
+        logging.error(f"An unexpected error occurred in send_ntfy_notification: {e}", exc_info=True)
+
+class NtfyLogHandler(logging.Handler):
+    """
+    A logging handler that sends notifications for ERROR and CRITICAL logs
+    to a configured ntfy endpoint.
+    """
+    def __init__(self):
+        super().__init__()
+
+    def emit(self, record):
+        """
+        Formats and sends the log record as a notification.
+        """
+        try:
+            # Format the message
+            msg = self.format(record)
+            
+            # If there's exception info (e.g., from logger.exception or exc_info=True), add it
+            if record.exc_info:
+                msg += "\n\n" + "".join(traceback.format_exception(*record.exc_info))
+
+            send_ntfy_notification(
+                title=f"Vex TM Manager Tools - {record.levelname}",
+                message=msg
+            )
+        except Exception:
+            # In case of an unexpected error within the handler itself,
+            # we can fall back to logging it directly to avoid recursion.
+            self.handleError(record)
+
+# Configure logging
+# Keep the existing basicConfig, but also add our queue handler
+queue_handler = QueueLogHandler(log_queue)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+queue_handler.setFormatter(formatter)
+logging.getLogger().addHandler(queue_handler)
+
+# Add the ntfy handler to the root logger
+ntfy_handler = NtfyLogHandler()
+ntfy_handler.setLevel(logging.ERROR)  # Only send notifications for ERROR and CRITICAL
+logging.getLogger().addHandler(ntfy_handler)
+
+logging.getLogger().setLevel(logging.DEBUG) # Ensure root logger captures all levels
+
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
@@ -50,7 +151,12 @@ def _atomic_write(file_path, data):
         if 'temp_path' in locals() and os.path.exists(temp_path):
             os.remove(temp_path)
 
-def login_required(role="ANY"):
+def login_required(roles=None):
+    if roles is None:
+        roles = ["ANY"]
+    if isinstance(roles, str):
+        roles = [roles]
+
     def wrapper(fn):
         @wraps(fn)
         def decorated_view(*args, **kwargs):
@@ -59,9 +165,20 @@ def login_required(role="ANY"):
                 return redirect(url_for('login', next=request.url))
             
             user_role = session.get('user', {}).get('role')
-            if role != "ANY" and user_role != role:
+
+            # Owners and admins have universal access
+            if user_role in ['owner', 'admin']:
+                return fn(*args, **kwargs)
+
+            # Allow any logged-in user if "ANY" is in roles
+            if "ANY" in roles:
+                return fn(*args, **kwargs)
+
+            # Check if the user's role is in the allowed list
+            if user_role not in roles:
                 flash("You do not have permission to view this page.", "danger")
                 return redirect(url_for('index'))
+            
             return fn(*args, **kwargs)
         return decorated_view
     return wrapper
@@ -142,7 +259,7 @@ def logout():
     return redirect(url_for('index'))
 
 @app.route('/config_editor')
-@login_required(role="admin")
+@login_required(roles=["admin"])
 def config_editor_page():
     """
     Serves the configuration editor page.
@@ -150,7 +267,7 @@ def config_editor_page():
     return render_template('config_editor.html')
 
 @app.route('/api/storage_files')
-@login_required(role="admin")
+@login_required(roles=["admin"])
 def list_storage_files():
     """
     API endpoint to list all .json files in the storage directory.
@@ -162,7 +279,7 @@ def list_storage_files():
         return jsonify([])
 
 @app.route('/api/storage_file_content')
-@login_required(role="admin")
+@login_required(roles=["admin"])
 def get_storage_file_content():
     """
     API endpoint to get the content of a specific file in the storage directory.
@@ -187,7 +304,7 @@ def get_storage_file_content():
         return "Error reading file", 500
 
 @app.route('/api/save_storage_file', methods=['POST'])
-@login_required(role="admin")
+@login_required(roles=["admin"])
 def save_storage_file():
     """
     API endpoint to save content to a specific file in the storage directory.
@@ -224,7 +341,7 @@ def save_storage_file():
 
 
 @app.route('/pause', methods=['GET', 'POST'])
-@login_required(role="admin")
+@login_required(roles=["admin"])
 def pause_controls():
     """
     Page for pausing/resuming action categories.
@@ -243,8 +360,117 @@ def pause_controls():
 
     return render_template('pause.html', paused=config.paused)
 
+@app.route('/admin/users')
+@login_required(roles=["admin"])
+def manage_users_page():
+    """
+    Serves the user management page.
+    """
+    return render_template('manage_users.html')
+
+@app.route('/api/users', methods=['GET'])
+@login_required(roles=["admin"])
+def get_users():
+    """
+    API endpoint to get all users.
+    """
+    users = userManager.list_users()
+    return jsonify([user.__dict__ for user in users])
+
+@app.route('/api/users/<username>', methods=['GET'])
+@login_required(roles=["admin"])
+def get_user(username):
+    """
+    API endpoint to get a single user's details.
+    """
+    user_data = userManager.getDetails(username)
+    if user_data:
+        role = user_data[2]
+        email = user_data[3] if len(user_data) > 3 else None
+        return jsonify({"userName": username, "role": role, "email": email})
+    return jsonify({"error": "User not found"}), 404
+
+@app.route('/api/users/add', methods=['POST'])
+@login_required(roles=["admin"])
+def add_user_api():
+    """
+    API endpoint to add a new user.
+    """
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+    role = data.get('role')
+    email = data.get('email')
+
+    if not all([username, password, role]):
+        return jsonify({"error": "Username, password, and role are required."}), 400
+    
+    if role == 'owner':
+        return jsonify({"error": "The 'owner' role cannot be assigned via the API."}), 403
+
+    try:
+        userManager.Signup(username, password, role, email)
+        return jsonify({"status": "ok"})
+    except FileExistsError:
+        return jsonify({"error": "User already exists."}), 409
+    except Exception as e:
+        logger.error(f"Error adding user {username}: {e}")
+        return jsonify({"error": "An internal error occurred."}), 500
+
+@app.route('/api/users/update/<username>', methods=['POST'])
+@login_required(roles=["admin"])
+def update_user_api(username):
+    """
+    API endpoint to update a user.
+    """
+    data = request.get_json()
+    role = data.get('role')
+    email = data.get('email')
+    new_password = data.get('new_password')
+
+    if role == 'owner':
+        return jsonify({"error": "The 'owner' role cannot be assigned via the API."}), 403
+
+    try:
+        # Update role and email
+        userManager.update_user(username, role, email)
+
+        # If a new password is provided, change it
+        if new_password:
+            userManager.changePassword(username, new_password)
+            
+        return jsonify({"status": "ok"})
+    except FileNotFoundError:
+        return jsonify({"error": "User not found."}), 404
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 403
+    except Exception as e:
+        logger.error(f"Error updating user {username}: {e}")
+        return jsonify({"error": "An internal error occurred."}), 500
+
+@app.route('/api/users/delete/<username>', methods=['POST'])
+@login_required(roles=["admin"])
+def delete_user_api(username):
+    """
+    API endpoint to delete a user.
+    """
+    # Prevent users from deleting themselves
+    if 'user' in session and session['user']['userName'] == username:
+        return jsonify({"error": "You cannot delete your own account."}), 403
+
+    try:
+        if userManager.delete_user(username):
+            return jsonify({"status": "ok"})
+        else:
+            return jsonify({"error": "User not found."}), 404
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 403
+    except Exception as e:
+        logger.error(f"Error deleting user {username}: {e}")
+        return jsonify({"error": "An internal error occurred."}), 500
+
 @app.route('/admin/rooms', methods=['GET'])
-@login_required(role="admin")
+@login_required(roles=["admin"])
 def room_management():
     """
     Admin page for managing rooms.
@@ -254,7 +480,7 @@ def room_management():
     return render_template('room_management.html', rooms=rooms)
 
 @app.route('/admin/rooms/add', methods=['POST'])
-@login_required(role="admin")
+@login_required(roles=["admin"])
 def add_room():
     """
     Adds a new room to the configuration.
@@ -278,7 +504,7 @@ def add_room():
     return redirect(url_for('room_management'))
 
 @app.route('/admin/rooms/edit/<room_id>', methods=['GET', 'POST'])
-@login_required(role="admin")
+@login_required(roles=["admin"])
 def edit_room(room_id):
     """
     Edits an existing room.
@@ -298,7 +524,7 @@ def edit_room(room_id):
     return render_template('edit_room.html', room_id=room_id, room=room)
 
 @app.route('/admin/rooms/delete/<room_id>', methods=['POST'])
-@login_required(role="admin")
+@login_required(roles=["admin"])
 def delete_room(room_id):
     """
     Deletes a room.
@@ -311,7 +537,7 @@ def delete_room(room_id):
     return redirect(url_for('room_management'))
 
 @app.route('/controls')
-@login_required()
+@login_required(roles=["admin", "av"])
 def controls_page():
     """
     Page for manual controls.
@@ -374,7 +600,7 @@ def api_config():
 
 
 @app.route('/api/presets', methods=['GET', 'POST'])
-@login_required(role="admin")
+@login_required(roles=["admin", "av"])
 def presets_api():
     """
     API for managing presets.
@@ -400,7 +626,6 @@ def api_active_popups():
     return jsonify(_read_json(POPUPS_FILE, default=[]))
 
 @app.route('/api/remove_popup/<popup_id>', methods=['POST'])
-@login_required()
 def remove_popup(popup_id):
     """
     Removes a popup from the active list.
@@ -415,7 +640,7 @@ def remove_popup(popup_id):
         return jsonify({"error": "popup_id not found"}), 404
 
 @app.route('/api/send_popup', methods=['POST'])
-@login_required()
+@login_required(roles=["admin"])
 def api_send_popup():
     if not event_queue or not loop:
         return jsonify({"error": "Event queue not available"}), 500
@@ -437,12 +662,20 @@ def api_send_popup():
     return jsonify({"status": "ok"})
 
 @app.route('/api/trigger_action', methods=['POST'])
-@login_required()
+@login_required(roles=["admin", "av"])
 def api_trigger_action():
     if not event_queue or not loop:
         return jsonify({"error": "Event queue not available"}), 500
         
     data = request.json
+    action_type = data.get("type")
+
+    # AV role restriction
+    user_role = session.get('user', {}).get('role')
+    if user_role == 'av':
+        if not action_type or not any(action_type.startswith(cat) for cat in ['lighting', 'video', 'audio']):
+            return jsonify({"error": "You are not authorized to trigger this type of action."}), 403
+
     action_event = Event(type="manual_action", payload=data)
     
     # Use run_coroutine_threadsafe to safely put an item into the asyncio queue
@@ -450,28 +683,8 @@ def api_trigger_action():
     asyncio.run_coroutine_threadsafe(event_queue.put(action_event), loop)
     return jsonify({"status": "ok"})
 
-@app.route('/api/simulate_event', methods=['POST'])
-def api_simulate_event():
-    if not event_queue or not loop:
-        return jsonify({"error": "Event queue not available"}), 500
-        
-    data = request.json
-    # Basic validation
-    if 'type' not in data:
-        return jsonify({"error": "Request must include 'type'"}), 400
-
-    event = Event(
-        type=data['type'],
-        field=data.get('field'),
-        payload=data.get('payload', {})
-    )
-    
-    asyncio.run_coroutine_threadsafe(event_queue.put(event), loop)
-    logger.info(f"Successfully queued simulated event: {event.to_json()}")
-    return jsonify({"status": "ok", "event": event.to_dict()})
-
 @app.route('/simulator')
-@login_required(role="admin")
+@login_required(roles=["admin"])
 def event_simulator_page():
     """
     Serves the event simulator page.
@@ -479,7 +692,7 @@ def event_simulator_page():
     return render_template('event_simulator.html')
 
 @app.route('/api/simulate_event_from_web', methods=['POST'])
-@login_required(role="admin")
+@login_required(roles=["admin"])
 def api_simulate_event_from_web():
     """
     Endpoint to receive simulation requests from the web UI.
@@ -592,6 +805,71 @@ def profile_email():
     except Exception as e:
         flash(f'An error occurred: {e}', 'danger')
     return redirect(url_for('profile'))
+
+@app.route('/logs')
+@login_required(roles=["admin", "owner"])
+def logs_page():
+    """
+    Serves the live logs page.
+    """
+    return render_template('logs.html')
+
+@app.route('/stream-logs')
+@login_required(roles=["admin", "owner"])
+def stream_logs():
+    def generate():
+        while True:
+            try:
+                log_record = log_queue.get(timeout=10)
+                yield f"data: {log_record}\n\n"
+            except queue.Empty:
+                # Send a comment to keep the connection alive
+                yield ": keep-alive\n\n"
+            time.sleep(0.1) # Prevent tight loop
+    return Response(generate(), mimetype='text/event-stream')
+
+@app.errorhandler(404)
+def not_found_error(error):
+    return render_template('error.html', error_code=404, error_message="The page you're looking for can't be found."), 404
+
+@app.errorhandler(Exception)
+def internal_error(error):
+    # Log the error for debugging
+    logger.error(f"An unhandled exception occurred: {error}", exc_info=True)
+
+    # --- Send ntfy notification ---
+    try:
+        config_data = _read_json(CONFIG_FILE, default={})
+        ntfy_endpoint = config_data.get("ntfy_error_endpoint")
+        ntfy_user = config_data.get("ntfy_user")
+        ntfy_pass = config_data.get("ntfy_pass")
+
+        if ntfy_endpoint:
+            auth = None
+            if ntfy_user and ntfy_pass:
+                auth = (ntfy_user, ntfy_pass)
+
+            # Use a short timeout to avoid blocking the application for too long
+            requests.post(
+                ntfy_endpoint,
+                data=message.encode(encoding='utf-8'),
+                headers={"Title": title, "Priority": priority, "Tags": tags},
+                timeout=5,
+                auth=auth
+            )
+            # This log is at INFO level to avoid potential recursion if ntfy handler is set to INFO
+            logging.info(f"Successfully sent notification to ntfy endpoint: {ntfy_endpoint}")
+    except Exception as e:
+        # Log the exception that occurred while trying to notify
+        logging.warning(f"Failed to send ntfy notification: {e}")
+    # --- End ntfy notification ---
+    
+    # For 5xx errors, we can be more generic
+    error_code = getattr(error, 'code', 500)
+    if not (isinstance(error_code, int) and 500 <= error_code < 600):
+        error_code = 500
+
+    return render_template('error.html', error_code=error_code, error_message="An unexpected error occurred. The team has been notified."), error_code
 
 
 if __name__ == "__main__":

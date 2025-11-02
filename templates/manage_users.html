@@ -1,0 +1,276 @@
+{% extends 'base.html' %}
+
+{% block title %}Manage Users{% endblock %}
+
+{% block content %}
+<style>
+    .user-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1.5rem;
+    }
+    .user-table th, .user-table td {
+        padding: 12px 15px;
+        text-align: left;
+        border-bottom: 1px solid var(--surface);
+    }
+    .user-table th {
+        background-color: rgba(255,255,255,0.03);
+        font-weight: 600;
+        color: var(--primary);
+    }
+    .user-table tr:last-child td {
+        border-bottom: none;
+    }
+    .user-table .actions {
+        text-align: right;
+    }
+    .user-table .actions .btn {
+        padding: 6px 10px;
+        font-size: 0.9rem;
+    }
+    .user-table .actions i {
+        font-size: 1.2em;
+        vertical-align: middle;
+    }
+    .modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        overflow: auto;
+        background-color: rgba(0,0,0,0.6);
+        backdrop-filter: blur(5px);
+    }
+    .modal-content {
+        background-color: var(--bg-2);
+        margin: 10% auto;
+        padding: 2rem;
+        border: 1px solid var(--surface);
+        width: 80%;
+        max-width: 500px;
+        border-radius: 8px;
+        position: relative;
+    }
+    .close {
+        color: var(--muted);
+        position: absolute;
+        top: 1rem;
+        right: 1.5rem;
+        font-size: 28px;
+        font-weight: bold;
+        cursor: pointer;
+    }
+    .close:hover, .close:focus {
+        color: var(--fg);
+    }
+</style>
+
+<div class="card">
+    <div class="card-header">
+        <h2><i class="ri-user-add-line"></i> Add New User</h2>
+    </div>
+    <div class="card-body">
+        <form id="addUserForm">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            <div class="form-group">
+                <label for="email">Email (for Gravatar)</label>
+                <input type="email" id="email" name="email">
+            </div>
+            <div class="form-group">
+                                <label for="role">Role</label>
+                <select id="role" name="role" required>
+                    <option value="user">User</option>
+                    <option value="admin">Admin</option>
+                    <option value="av">AV</option>
+                </select>
+            </div>
+            <button type="submit" class="btn">Add User</button>
+        </form>
+    </div>
+</div>
+            </div>
+            <button type="submit" class="btn">Add User</button>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2><i class="ri-group-line"></i> Current Users</h2>
+    </div>
+    <div class="card-body">
+        <table class="user-table" id="userTable">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Role</th>
+                    <th>Email</th>
+                    <th class="actions">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- User rows will be injected here by JavaScript -->
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Edit User Modal -->
+<div id="editUserModal" class="modal">
+    <div class="modal-content">
+        <span class="close">&times;</span>
+        <h2>Edit User</h2>
+        <form id="editUserForm">
+            <input type="hidden" id="editUsername" name="username">
+            <div class="form-group">
+                <label for="editEmail">Email</label>
+                <input type="email" id="editEmail" name="email">
+            </div>
+            <div class="form-group">
+                <label for="editRole">Role</label>
+                <select id="editRole" name="role" required>
+                    <option value="user">User</option>
+                    <option value="admin">Admin</option>
+                </select>
+            </div>
+            <hr style="border-color: var(--surface); margin: 1.5rem 0;">
+            <h4>Reset Password</h4>
+            <div class="form-group">
+                <label for="editPassword">New Password (leave blank to keep unchanged)</label>
+                <input type="password" id="editPassword" name="new_password">
+            </div>
+            <div class="but-row">
+                <button type="submit" class="btn">Save Changes</button>
+                <button type="button" class="btn btn-secondary" id="cancelEdit">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const userTableBody = document.querySelector('#userTable tbody');
+    const addUserForm = document.getElementById('addUserForm');
+    const editUserModal = document.getElementById('editUserModal');
+    const editUserForm = document.getElementById('editUserForm');
+    const closeModal = document.querySelector('.modal .close');
+    const cancelEditBtn = document.getElementById('cancelEdit');
+
+    function fetchUsers() {
+        fetch('/api/users')
+            .then(response => response.json())
+            .then(users => {
+                userTableBody.innerHTML = '';
+                users.forEach(user => {
+                    const row = `
+                        <tr data-username="${user.userName}">
+                            <td>${user.userName}</td>
+                            <td>${user.role}</td>
+                            <td>${user.email || 'N/A'}</td>
+                            <td class="actions">
+                                <button class="btn btn-secondary edit-btn"><i class="ri-pencil-line"></i> Edit</button>
+                                <button class="btn btn-danger delete-btn"><i class="ri-delete-bin-line"></i> Delete</button>
+                            </td>
+                        </tr>
+                    `;
+                    userTableBody.insertAdjacentHTML('beforeend', row);
+                });
+            });
+    }
+
+    addUserForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        const data = Object.fromEntries(formData.entries());
+
+        fetch('/api/users/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.status === 'ok') {
+                fetchUsers();
+                addUserForm.reset();
+                // Maybe show a success flash message
+            } else {
+                alert('Error: ' + result.error);
+            }
+        });
+    });
+
+    userTableBody.addEventListener('click', function(e) {
+        const username = e.target.closest('tr').dataset.username;
+
+        if (e.target.closest('.delete-btn')) {
+            if (confirm(`Are you sure you want to delete user "${username}"?`)) {
+                fetch(`/api/users/delete/${username}`, { method: 'POST' })
+                .then(response => response.json())
+                .then(result => {
+                    if (result.status === 'ok') {
+                        fetchUsers();
+                    } else {
+                        alert('Error: ' + result.error);
+                    }
+                });
+            }
+        }
+
+        if (e.target.closest('.edit-btn')) {
+            fetch(`/api/users/${username}`)
+                .then(response => response.json())
+                .then(user => {
+                    document.getElementById('editUsername').value = user.userName;
+                    document.getElementById('editEmail').value = user.email || '';
+                    document.getElementById('editRole').value = user.role;
+                    editUserModal.style.display = 'block';
+                });
+        }
+    });
+
+    editUserForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        const data = Object.fromEntries(formData.entries());
+        const username = data.username;
+
+        fetch(`/api/users/update/${username}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(result => {
+            if (result.status === 'ok') {
+                editUserModal.style.display = 'none';
+                fetchUsers();
+            } else {
+                alert('Error: ' + result.error);
+            }
+        });
+    });
+
+    closeModal.onclick = () => editUserModal.style.display = 'none';
+    cancelEditBtn.onclick = () => editUserModal.style.display = 'none';
+    window.onclick = (event) => {
+        if (event.target == editUserModal) {
+            editUserModal.style.display = 'none';
+        }
+    };
+
+    fetchUsers();
+});
+</script>
+{% endblock %}

@@ -11,6 +11,10 @@ We will be using Docker.
 * The service will be IP Restricted, with only the School's IP Block being allowed to access it.
     * This will allow the classroom desktops to freely access it, without any authentication needing to be done on any device
 
+## Errors
+Errors will send out notification: https://ntfy.vmd1.dev/vex-tm-manager-tools-errors.   
+They will also be displayed on the server logs page
+
 ## Notes
-Docker registry logins:  
+Docker/ntfy registry logins:  
 * `qe`:`AnonymousTurtle76`
