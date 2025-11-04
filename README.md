@@ -1,4 +1,4 @@
-VEX TM Manager Spotify Sync + Other Tools
+# VEX TM Manager Spotify Sync + Other Tools
 ## What will this do?
 1. Connect to TM Manager via the TM Manager Public API and track match starts, ends, and updates to audience displays using the Field Set Websocket
 2. Connect to the Spotify API and play music in time with match starts, from a predefined list stored in a json file
