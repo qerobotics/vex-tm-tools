@@ -1,4 +1,4 @@
-# VEX TM Manager Spotify Sync + Other Tools
+<img width="1632" height="2112" alt="image" src="https://github.com/user-attachments/assets/d12139a6-1964-4fdc-b473-bf3eb4d12af1" /># VEX TM Manager Spotify Sync + Other Tools
 ## What will this do?
 1. Connect to TM Manager via the TM Manager Public API and track match starts, ends, and updates to audience displays using the Field Set Websocket
 2. Connect to the Spotify API and play music in time with match starts, from a predefined list stored in a json file
@@ -32,6 +32,8 @@ Planning on using Spotipy
 * FLX S48 Manual: https://support.vikinglighting.co.uk/downloads/FLX%20S%20User%20Manual%20v1.pdf
 * https://www.zero88.com/manuals/zeros/setup/triggers/osc
 * https://python-osc.readthedocs.io/en/latest/
+* Rogue Light Manuals:
+* https://www.chauvetprofessional.com/wp-content/uploads/2019/10/Rogue_R2X_wash_UM_Rev2.pdf
 
 Will be using Open Sound Control (OSC)
 
