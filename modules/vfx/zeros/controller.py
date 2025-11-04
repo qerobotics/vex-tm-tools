@@ -19,20 +19,22 @@ class ZerOSController:
             logger.error("ZerOS OSC client not initialized. Cannot execute action.")
             return
 
-        preset_id = action.preset_id
-        logger.info(f"Executing ZerOS action: Trigger preset {preset_id}")
+        target_id = action.preset_id
+        target_type = action.target_type or 'cue'
+        command = action.command or 'fire'
+        
+        logger.info(f"Executing ZerOS action: Target: {target_type} {target_id}, Command: {command}")
 
         try:
-            # ZerOS OSC command for firing a cue is /zeros/cue/<cue_number>/fire
-            # We assume the preset_id in our action maps directly to a cue number.
-            cue_number = int(preset_id)
-            address = f"/zeros/cue/{cue_number}/fire"
+            # ZerOS OSC command format: /zeros/<target_type>/<target_id>/<command>
+            target_id_num = int(target_id)
+            address = f"/zeros/{target_type}/{command}/{target_id_num}"
             
-            self.client.send_message(address, 1.0) # Sending a float value of 1.0 to fire
+            self.client.send_message(address, 1.0) # Sending a float value of 1.0 to fire/go
             logger.info(f"Sent OSC message to {address}")
 
-        except ValueError:
-            logger.error(f"Invalid preset_id for ZerOS: {preset_id}. Must be an integer.")
+        except (ValueError, TypeError):
+            logger.error(f"Invalid target_id for ZerOS: {target_id}. Must be an integer.")
         except Exception as e:
             logger.error(f"An unexpected error occurred during ZerOS OSC action: {e}")
 

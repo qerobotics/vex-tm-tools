@@ -18,7 +18,17 @@
                 <!-- Presets will be dynamically inserted here -->
             </div>
             <div class="manual-entry">
-                <input type="number" id="lighting-preset-manual" placeholder="Manual ID">
+                <select id="lighting-target-type">
+                    <option value="cue" selected>Cue</option>
+                    <option value="playback">Playback</option>
+                </select>
+                <input type="number" id="lighting-target-id" placeholder="ID">
+                <select id="lighting-command">
+                    <option value="fire" selected>Fire</option>
+                    <option value="go">Go</option>
+                    <option value="pause">Pause</option>
+                    <option value="next">Next</option>
+                </select>
                 <button onclick="sendManualLighting()">Send</button>
             </div>
             <div id="lighting-edit-panel" style="display: none;">
@@ -100,9 +110,15 @@
 
     // --- Specific Handlers for Manual Inputs ---
     function sendManualLighting() {
-        const presetId = document.getElementById('lighting-preset-manual').value;
-        if (presetId) {
-            triggerAction('lighting', { preset_id: parseInt(presetId) });
+        const targetId = document.getElementById('lighting-target-id').value;
+        const targetType = document.getElementById('lighting-target-type').value;
+        const command = document.getElementById('lighting-command').value;
+        if (targetId) {
+            triggerAction('lighting', { 
+                preset_id: parseInt(targetId),
+                target_type: targetType,
+                command: command
+            });
         }
     }
 
