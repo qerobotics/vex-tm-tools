@@ -30,11 +30,12 @@ Planning on using Spotipy
 ## ZerOS Lighting Board
 ### Useful Resources
 * FLX S48 Manual: https://support.vikinglighting.co.uk/downloads/FLX%20S%20User%20Manual%20v1.pdf
-* https://www.zero88.com/manuals/zeros/setup/triggers/osc
-* https://python-osc.readthedocs.io/en/latest/
+* OSC Stuff:
+    * https://www.zero88.com/manuals/zeros/setup/triggers/osc
+    * https://python-osc.readthedocs.io/en/latest/
 * Rogue Light Manuals:
-* https://www.chauvetprofessional.com/wp-content/uploads/2019/10/Rogue_R2X_Wash_UM_Rev2.pdf
-* https://www.chauvetprofessional.com/wp-content/uploads/2020/01/Rogue_wash_VW_QRG_ML5_Rev4.pdf
+    * https://www.chauvetprofessional.com/wp-content/uploads/2019/10/Rogue_R2X_Wash_UM_Rev2.pdf
+    * https://www.chauvetprofessional.com/wp-content/uploads/2020/01/Rogue_wash_VW_QRG_ML5_Rev4.pdf
 
 Will be using Open Sound Control (OSC)
 
