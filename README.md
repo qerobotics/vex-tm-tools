@@ -6,6 +6,10 @@
 4. Connect to a ZerOS lighting board and switch lighting using OSC. Lighting will follow this pattern: Queued field ready, Countdown, Active, Finish, Restart
 5. (Hopefully) Control the PTZ Module attatched to the camera using a micro-controller connected to a servo, such as a Raspberry Pi or Arduino (Avi's Idea)
 
+## Contribution Guidelines (READ THESE)
+* DON'T TOUCH THE CODE UNLESS YOU KNOW WHAT YOU'RE DOING
+* Please make a pull request instead of directly committing so i can actually see what you're adding
+
 ## TM Manager Connection
 ### Useful Resources
 * API Guide: https://docs.google.com/document/d/1LYMOsPlYzZF3SYyTNPe2b3fvlbFc5XvA_Dmd-JH7ieU/edit?tab=t.0
