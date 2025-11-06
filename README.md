@@ -15,11 +15,6 @@
 * API Guide: https://docs.google.com/document/d/1LYMOsPlYzZF3SYyTNPe2b3fvlbFc5XvA_Dmd-JH7ieU/edit?tab=t.0
 * API Intro: https://kb.roboticseducation.org/hc/en-us/articles/19238156122135-TM-Public-API
 
-### API Key
-```
-waiting on this
-```
-
 ## Spotify API
 ### Useful Resources
 * https://developer.spotify.com/documentation/web-api
