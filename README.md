@@ -40,12 +40,14 @@ Will be using Open Sound Control (OSC)
 
 ### Lighting patterns
 #### Preset Allocations
-1-4. field 1 ready, countdown, active, finish  
-5-8. field 2 ready, countdown, active, finish  
-9-12. field 3 ready, countdown, match, finish  
-13. standby (1 blue on each field, 1 white on stage)  
-14. stage (4 white on stage)  
-15. light show  
+1-4. Field 1 ready (R), countdown(C), active(A), finish(F)
+7-10. Field 2 ready (R), countdown(C), active(A), finish(F)
+13-16. Field 3 ready (R), countdown(C), active(A), finish(F)
+19. Lectern (1 blue on each field, 1 white on lectern)
+20. Standby (1 blue on each field, 1 white on table)
+21. Stage (4 white on stage)
+22?. Light show (Master of Puppets intro)
+
 
 #### Preset Info
 ready= 2 red on field about to start match, 1 blue on other 2  
@@ -55,3 +57,4 @@ finish= all lights flash white, spin around and go back to standby
 
 ## PTZ Module
 No clue how we're gonna do this
+Planning to use humans 
