@@ -40,13 +40,13 @@ Will be using Open Sound Control (OSC)
 
 ### Lighting patterns
 #### Preset Allocations
-1-4. Field 1 ready (R), countdown(C), active(A), finish(F)
-7-10. Field 2 ready (R), countdown(C), active(A), finish(F)
-13-16. Field 3 ready (R), countdown(C), active(A), finish(F)
-19. Lectern (1 blue on each field, 1 white on lectern)
-20. Standby (1 blue on each field, 1 white on table)
-21. Stage (4 white on stage)
-22?. Light show (Master of Puppets intro)
+1-4. Field 1 ready (R), countdown(C), active(A), finish(F)  
+7-10. Field 2 ready (R), countdown(C), active(A), finish(F)  
+13-16. Field 3 ready (R), countdown(C), active(A), finish(F)  
+19. Lectern (1 blue on each field, 1 white on lectern)  
+20. Standby (1 blue on each field, 1 white on table)  
+21. Stage (4 white on stage)  
+22?. Light show (Master of Puppets intro)  
 
 
 #### Preset Info
