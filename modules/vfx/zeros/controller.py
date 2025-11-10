@@ -18,19 +18,27 @@ class ZerOSController:
         if not self.client:
             logger.error("ZerOS OSC client not initialized. Cannot execute action.")
             return
-
         target_id = action.preset_id
         target_type = action.target_type or 'cue'
         command = action.command or 'fire'
-        
+
+        logger.debug(f"Received lighting action: {action}")
         logger.info(f"Executing ZerOS action: Target: {target_type} {target_id}, Command: {command}")
 
         try:
-            # ZerOS OSC command format: /zeros/<target_type>/<target_id>/<command>
-            target_id_num = int(target_id)
+            # ZerOS OSC command format used here: /zeros/<target_type>/<command>/<target_id>
+            # If the target is a cue and no ID was provided, default to cue 1
+            if target_type == 'cue' and (target_id is None or str(target_id).strip() == ''):
+                logger.debug("No cue ID provided; defaulting to cue 1")
+                target_id_num = 1
+            else:
+                target_id_num = int(target_id)
+
             address = f"/zeros/{target_type}/{command}/{target_id_num}"
-            
-            self.client.send_message(address, 1.0) # Sending a float value of 1.0 to fire/go
+            value = 1.0
+
+            logger.debug(f"Constructed OSC address: {address} with value: {value}")
+            self.client.send_message(address, value)
             logger.info(f"Sent OSC message to {address}")
 
         except (ValueError, TypeError):

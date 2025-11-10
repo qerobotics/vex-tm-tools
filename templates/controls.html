@@ -113,13 +113,29 @@
         const targetId = document.getElementById('lighting-target-id').value;
         const targetType = document.getElementById('lighting-target-type').value;
         const command = document.getElementById('lighting-command').value;
-        if (targetId) {
-            triggerAction('lighting', { 
-                preset_id: parseInt(targetId),
-                target_type: targetType,
-                command: command
-            });
+
+        let idToSend = null;
+        if (targetType === 'cue') {
+            // If cue and empty, default to 1
+            if (!targetId || targetId.toString().trim() === '') {
+                idToSend = 1;
+            } else {
+                idToSend = parseInt(targetId);
+            }
+        } else {
+            // For playback, require an ID
+            if (!targetId || targetId.toString().trim() === '') {
+                alert('Please provide an ID for the selected target type.');
+                return;
+            }
+            idToSend = parseInt(targetId);
         }
+
+        triggerAction('lighting', { 
+            preset_id: idToSend,
+            target_type: targetType,
+            command: command
+        });
     }
 
     function sendManualAudio() {

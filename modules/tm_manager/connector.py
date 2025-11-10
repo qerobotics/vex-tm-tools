@@ -48,7 +48,12 @@ class VexTmConnector:
                 }
 
                 logger.info(f"Connecting to websocket at {ws_url}")
-                async with websockets.connect(ws_url, extra_headers=headers) as websocket:
+
+                connect_args = {"extra_headers": headers}
+                if hasattr(websockets.connect, "additional_headers"):
+                    connect_args = {"additional_headers": headers}
+
+                async with websockets.connect(ws_url, **connect_args) as websocket:
                     logger.info("Websocket connection established.")
                     while True:
                         message = await websocket.recv()
