@@ -118,10 +118,13 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 queue_handler.setFormatter(formatter)
 logging.getLogger().addHandler(queue_handler)
 
-# Add the ntfy handler to the root logger
-ntfy_handler = NtfyLogHandler()
-ntfy_handler.setLevel(logging.ERROR)  # Only send notifications for ERROR and CRITICAL
-logging.getLogger().addHandler(ntfy_handler)
+# Add the ntfy handler to the root logger if configured
+config_data_for_logging = _read_json(CONFIG_FILE, default={})
+if config_data_for_logging.get("ntfy_error_endpoint"):
+    ntfy_handler = NtfyLogHandler()
+    ntfy_handler.setLevel(logging.ERROR)  # Only send notifications for ERROR and CRITICAL
+    logging.getLogger().addHandler(ntfy_handler)
+    logging.getLogger(__name__).info("ntfy log handler enabled.")
 
 logging.getLogger().setLevel(logging.DEBUG) # Ensure root logger captures all levels
 
