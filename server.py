@@ -22,6 +22,13 @@ from userManager import UserManager
 event_queue = None
 loop = None
 
+def _read_json(file_path, default=None):
+    try:
+        with open(file_path, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return default
+
 def set_event_queue(queue, main_loop):
     global event_queue, loop
     event_queue = queue
@@ -185,13 +192,6 @@ def login_required(roles=None):
             return fn(*args, **kwargs)
         return decorated_view
     return wrapper
-
-def _read_json(file_path, default=None):
-    try:
-        with open(file_path, 'r') as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return default
 
 def get_field_statuses():
     """
