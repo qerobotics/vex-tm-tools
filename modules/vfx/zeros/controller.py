@@ -7,6 +7,7 @@ class ZerOSController:
     def __init__(self, board_ip, port=8000):
         self.board_ip = board_ip
         self.port = port
+        logger.debug(f"Attempting to initialize ZerOSController for IP {self.board_ip} on port {self.port}")
         try:
             self.client = udp_client.SimpleUDPClient(self.board_ip, self.port)
             logger.info(f"Initialized OSC client for ZerOS board at {self.board_ip}:{self.port}")
@@ -15,6 +16,7 @@ class ZerOSController:
             self.client = None
 
     def execute_action(self, action):
+        logger.debug(f"Executing action: {action.to_dict() if hasattr(action, 'to_dict') else action}")
         if not self.client:
             logger.error("ZerOS OSC client not initialized. Cannot execute action.")
             return

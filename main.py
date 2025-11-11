@@ -12,12 +12,15 @@ from modules.match_scheduler import MatchScheduler
 from server import app, set_event_queue
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Reduce noisy ntfy and server debug logs: keep only INFO+ from these sources
 logging.getLogger("ntfy").setLevel(logging.INFO)
 logging.getLogger("server").setLevel(logging.INFO)
+
+# Enable debug logging specifically for the zeros controller
+logging.getLogger("modules.vfx.zeros.controller").setLevel(logging.DEBUG)
 
 def run_flask(host, port):
     """Function to run Flask app in a separate thread."""
