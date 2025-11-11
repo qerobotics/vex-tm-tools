@@ -22,6 +22,15 @@ from userManager import UserManager
 event_queue = None
 loop = None
 
+# Storage paths used throughout the server. Define these early so functions that
+# run during module import (like logging configuration) can read the config file.
+STORAGE_PATH = 'storage'
+FIELDS_DIR = os.path.join(STORAGE_PATH, 'fields')
+CONFIG_FILE = os.path.join(STORAGE_PATH, 'config.json')
+SCHEDULED_MATCHES_FILE = os.path.join(STORAGE_PATH, 'scheduled_matches.json')
+POPUPS_FILE = os.path.join(STORAGE_PATH, 'popups.json')
+PRESETS_FILE = os.path.join(STORAGE_PATH, 'presets.json')
+
 def _read_json(file_path, default=None):
     try:
         with open(file_path, 'r') as f:
@@ -54,40 +63,10 @@ logging.getLogger().addHandler(queue_handler)
 
 def send_ntfy_notification(title, message, priority="high", tags="rotating_light"):
     """Helper function to send a notification to the configured ntfy endpoint."""
-    logging.getLogger(__name__).debug("Attempting to send ntfy notification...")
-    try:
-        config_data = _read_json(CONFIG_FILE, default={})
-        ntfy_endpoint = config_data.get("ntfy_error_endpoint")
-        ntfy_user = config_data.get("ntfy_user")
-        ntfy_pass = config_data.get("ntfy_pass")
-
-        if not ntfy_endpoint:
-            logging.warning("ntfy_error_endpoint is not configured. Skipping notification.")
-            return
-
-        logging.getLogger(__name__).debug(f"ntfy endpoint: {ntfy_endpoint}")
-        auth = None
-        if ntfy_user and ntfy_pass:
-            auth = (ntfy_user, ntfy_pass)
-            logging.getLogger(__name__).debug("Using ntfy authentication.")
-
-        response = requests.post(
-            ntfy_endpoint,
-            data=message.encode(encoding='utf-8'),
-            headers={"Title": title, "Priority": priority, "Tags": tags},
-            timeout=10, # Increased timeout
-            auth=auth
-        )
-        
-        if response.status_code == 200:
-            logging.info(f"Successfully sent notification to ntfy endpoint: {ntfy_endpoint}")
-        else:
-            logging.error(f"Failed to send ntfy notification. Status: {response.status_code}, Response: {response.text}")
-
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Failed to send ntfy notification due to a network error: {e}")
-    except Exception as e:
-        logging.error(f"An unexpected error occurred in send_ntfy_notification: {e}", exc_info=True)
+    # ntfy notifications have been disabled per user request.
+    # Keep the function as a no-op so callers don't need to be changed.
+    logging.getLogger(__name__).debug("ntfy notifications disabled; skipping send_ntfy_notification.")
+    return
 
 class NtfyLogHandler(logging.Handler):
     """
@@ -101,22 +80,10 @@ class NtfyLogHandler(logging.Handler):
         """
         Formats and sends the log record as a notification.
         """
-        try:
-            # Format the message
-            msg = self.format(record)
-            
-            # If there's exception info (e.g., from logger.exception or exc_info=True), add it
-            if record.exc_info:
-                msg += "\n\n" + "".join(traceback.format_exception(*record.exc_info))
-
-            send_ntfy_notification(
-                title=f"Vex TM Manager Tools - {record.levelname}",
-                message=msg
-            )
-        except Exception:
-            # In case of an unexpected error within the handler itself,
-            # we can fall back to logging it directly to avoid recursion.
-            self.handleError(record)
+        # ntfy notifications via logging handler are disabled.
+        # We leave this handler as a no-op to avoid changing places that may instantiate it.
+        logging.getLogger(__name__).debug("NtfyLogHandler.emit called but notifications are disabled.")
+        return
 
 # Configure logging
 # Keep the existing basicConfig, but also add our queue handler
@@ -126,12 +93,9 @@ queue_handler.setFormatter(formatter)
 logging.getLogger().addHandler(queue_handler)
 
 # Add the ntfy handler to the root logger if configured
-config_data_for_logging = _read_json(CONFIG_FILE, default={})
-if config_data_for_logging.get("ntfy_error_endpoint"):
-    ntfy_handler = NtfyLogHandler()
-    ntfy_handler.setLevel(logging.ERROR)  # Only send notifications for ERROR and CRITICAL
-    logging.getLogger().addHandler(ntfy_handler)
-    logging.getLogger(__name__).info("ntfy log handler enabled.")
+# ntfy log handler is intentionally disabled. If you want to re-enable ntfy
+# notifications, restore the lines above that add NtfyLogHandler when a
+# ntfy_error_endpoint is configured.
 
 logging.getLogger().setLevel(logging.DEBUG) # Ensure root logger captures all levels
 
@@ -841,31 +805,9 @@ def internal_error(error):
     logger.error(f"An unhandled exception occurred: {error}", exc_info=True)
 
     # --- Send ntfy notification ---
-    try:
-        config_data = _read_json(CONFIG_FILE, default={})
-        ntfy_endpoint = config_data.get("ntfy_error_endpoint")
-        ntfy_user = config_data.get("ntfy_user")
-        ntfy_pass = config_data.get("ntfy_pass")
-
-        if ntfy_endpoint:
-            auth = None
-            if ntfy_user and ntfy_pass:
-                auth = (ntfy_user, ntfy_pass)
-
-            # Use a short timeout to avoid blocking the application for too long
-            requests.post(
-                ntfy_endpoint,
-                data=message.encode(encoding='utf-8'),
-                headers={"Title": title, "Priority": priority, "Tags": tags},
-                timeout=5,
-                auth=auth
-            )
-            # This log is at INFO level to avoid potential recursion if ntfy handler is set to INFO
-            logging.info(f"Successfully sent notification to ntfy endpoint: {ntfy_endpoint}")
-    except Exception as e:
-        # Log the exception that occurred while trying to notify
-        logging.warning(f"Failed to send ntfy notification: {e}")
-    # --- End ntfy notification ---
+    # ntfy notifications for errors are disabled. Previously a post to the
+    # configured ntfy endpoint happened here; that behavior was removed to
+    # stop sending error notifications.
     
     # For 5xx errors, we can be more generic
     error_code = getattr(error, 'code', 500)
