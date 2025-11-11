@@ -47,7 +47,7 @@ logging.getLogger().addHandler(queue_handler)
 
 def send_ntfy_notification(title, message, priority="high", tags="rotating_light"):
     """Helper function to send a notification to the configured ntfy endpoint."""
-    logging.debug("Attempting to send ntfy notification...")
+    logging.getLogger(__name__).debug("Attempting to send ntfy notification...")
     try:
         config_data = _read_json(CONFIG_FILE, default={})
         ntfy_endpoint = config_data.get("ntfy_error_endpoint")
@@ -58,11 +58,11 @@ def send_ntfy_notification(title, message, priority="high", tags="rotating_light
             logging.warning("ntfy_error_endpoint is not configured. Skipping notification.")
             return
 
-        logging.debug(f"ntfy endpoint: {ntfy_endpoint}")
+        logging.getLogger(__name__).debug(f"ntfy endpoint: {ntfy_endpoint}")
         auth = None
         if ntfy_user and ntfy_pass:
             auth = (ntfy_user, ntfy_pass)
-            logging.debug("Using ntfy authentication.")
+            logging.getLogger(__name__).debug("Using ntfy authentication.")
 
         response = requests.post(
             ntfy_endpoint,

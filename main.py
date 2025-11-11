@@ -15,6 +15,10 @@ from server import app, set_event_queue
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Reduce noisy ntfy and server debug logs: keep only INFO+ from these sources
+logging.getLogger("ntfy").setLevel(logging.INFO)
+logging.getLogger("server").setLevel(logging.INFO)
+
 def run_flask(host, port):
     """Function to run Flask app in a separate thread."""
     logger.info(f"Starting Flask server on {host}:{port}")
