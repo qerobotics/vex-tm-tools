@@ -1,5 +1,3 @@
-.cache
-
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -16,5 +14,3 @@ build/
 storage/fields/*
 
 .vscode/
-
-tailscale/

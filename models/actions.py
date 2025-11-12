@@ -27,8 +27,8 @@ class VideoAction(Action):
 @dataclass
 class LightingAction(Action):
     preset_id: Optional[str] = None
-    target_type: Optional[str] = "cue"  # 'cue' or 'playback'
-    command: Optional[str] = "fire"  # 'fire', 'go', 'pause', 'next'
+    target_type: Optional[str] = "playback"  # 'cue' or 'playback'
+    command: Optional[str] = "go"  # 'fire', 'go', 'pause', 'next'
     type: str = "lighting"
 
 import fnmatch
