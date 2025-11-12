@@ -12,5 +12,6 @@ build/
 
 # Ignore storage fields (user-specific field JSON files)
 storage/fields/*
+storage/schedule.json
 
 .vscode/
