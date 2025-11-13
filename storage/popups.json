@@ -1,13 +1,1 @@
-[
-    {
-        "id": "e80ac877-848d-4a3f-a611-44f6e2c15d3e",
-        "room_ids": [
-            "M8"
-        ],
-        "title": "Upcoming Match: 1",
-        "message": "Teams: 24, 21",
-        "duration": 30,
-        "type": "toast",
-        "source": "match_scheduler"
-    }
-]
+[]
