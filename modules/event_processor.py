@@ -17,7 +17,7 @@ from modules.video.atem.controller import AtemController
 from modules.vfx.zeros.controller import ZerOSController
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class EventProcessor:

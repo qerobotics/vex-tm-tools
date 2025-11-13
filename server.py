@@ -97,7 +97,7 @@ logging.getLogger().addHandler(queue_handler)
 # notifications, restore the lines above that add NtfyLogHandler when a
 # ntfy_error_endpoint is configured.
 
-logging.getLogger().setLevel(logging.DEBUG) # Ensure root logger captures all levels
+logging.getLogger().setLevel(logging.INFO) # Ensure root logger captures all levels
 
 logger = logging.getLogger(__name__)
 
@@ -620,9 +620,10 @@ def api_send_popup():
     popup_payload = {
         "id": str(uuid.uuid4()),
         "room_ids": room_ids,
+        "title": data.get("title", "Notification"),
         "message": data.get("message"),
         "duration": data.get("duration", 15),
-        "type": data.get("type", "modal")  # Add type field, default to modal
+        "type": data.get("type", "modal")
     }
     popup_event = Event(type="manual_popup", payload=popup_payload)
     asyncio.run_coroutine_threadsafe(event_queue.put(popup_event), loop)

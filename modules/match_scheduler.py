@@ -125,13 +125,15 @@ class MatchScheduler:
                                 rooms_for_match.append(room_id)
 
                         if rooms_for_match:
-                            popup_message = f"Match {match_num} is starting soon. Teams: {', '.join(teams_in_match)}"
+                            popup_title = f"Upcoming Match: {match_num}"
+                            popup_message = f"Teams: {', '.join(teams_in_match)}"
                             popup = {
                                 "id": str(uuid.uuid4()),
                                 "room_ids": rooms_for_match,
+                                "title": popup_title,
                                 "message": popup_message,
                                 "duration": 30,
-                                "type": "toast",  # Match notifications should be toasts
+                                "type": "toast",
                                 "source": "match_scheduler"
                             }
                             popups.append(popup)

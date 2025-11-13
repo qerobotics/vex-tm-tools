@@ -16,3 +16,4 @@ storage/schedule.json
 storage/notified_matches.json
 
 .vscode/
+storage/popups.json

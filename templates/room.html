@@ -66,8 +66,8 @@
         popupTimeout = setTimeout(hideModal, duration * 1000);
     }
 
-    function showToastPopup(message, duration = 10, popupId) {
-        console.log(`Showing toast: id=${popupId}, message=${message}, duration=${duration}`);
+    function showToastPopup(message, duration = 10, popupId, title = "Notification") {
+        console.log(`Showing toast: id=${popupId}, title=${title}, message=${message}, duration=${duration}`);
         if (activeToastIds.has(popupId)) {
             console.log(`Toast ${popupId} is already active.`);
             return;
@@ -76,8 +76,13 @@
         const toastContainer = document.getElementById('toast-container');
         const toast = document.createElement('div');
         toast.className = 'toast';
-        toast.innerText = message;
         toast.id = `toast-${popupId}`;
+
+        // Add a title and body for better structure
+        toast.innerHTML = `
+            <div class="toast-title">${title}</div>
+            <div class="toast-body">${message}</div>
+        `;
 
         activeToastIds.add(popupId);
         toastContainer.appendChild(toast);
@@ -147,7 +152,7 @@
         const toastPopups = popupsForThisRoom.filter(p => p.type === 'toast');
         toastPopups.forEach(toastPopup => {
             if (!activeToastIds.has(toastPopup.id)) {
-                showToastPopup(toastPopup.message, toastPopup.duration, toastPopup.id);
+                showToastPopup(toastPopup.message, toastPopup.duration, toastPopup.id, toastPopup.title);
             }
         });
     }
@@ -231,19 +236,28 @@
         max-width: 350px;
     }
     .toast {
-        background-color: var(--color-background-light);
-        color: var(--color-text);
-        padding: 1rem 1.5rem;
+        background-color: #2c3e50; /* Darker, more solid background */
+        color: #ecf0f1; /* Lighter text for contrast */
+        padding: 1.25rem 1.75rem; /* Increased padding */
         border-radius: 8px;
-        box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+        box-shadow: 0 5px 15px rgba(0,0,0,0.4); /* More pronounced shadow */
         opacity: 0;
         transform: translateX(-120%);
-        transition: opacity 0.4s ease, transform 0.4s ease;
-        border-left: 5px solid var(--color-primary);
+        transition: opacity 0.5s ease, transform 0.5s ease;
+        border-left: 7px solid #3498db; /* Thicker, brighter accent border */
+        min-width: 320px;
     }
     .toast.show {
         opacity: 1;
         transform: translateX(0);
+    }
+    .toast-title {
+        font-weight: bold;
+        font-size: 1.2rem;
+        margin-bottom: 0.5rem;
+    }
+    .toast-body {
+        font-size: 1rem;
     }
 </style>
 {% endblock %}
