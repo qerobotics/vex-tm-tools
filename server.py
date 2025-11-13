@@ -118,7 +118,7 @@ def _atomic_write(file_path, data):
         temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(file_path))
         with os.fdopen(temp_fd, 'w') as temp_f:
             json.dump(data, temp_f, indent=4)
-        os.rename(temp_path, file_path)
+        os.replace(temp_path, file_path)
         logger.info(f"Successfully wrote to {file_path}")
     except Exception as e:
         logger.error(f"Failed to atomically write to {file_path}: {e}")
@@ -615,13 +615,14 @@ def api_send_popup():
     data = request.json
     room_ids = data.get("room_ids", [])
     if not room_ids:
-        return jsonify({"error": "room_ids must be a non-empty list"}), 400
+        return jsonify({"error": "room_ids is required"}), 400
 
     popup_payload = {
         "id": str(uuid.uuid4()),
         "room_ids": room_ids,
         "message": data.get("message"),
-        "duration": data.get("duration", 15)
+        "duration": data.get("duration", 15),
+        "type": data.get("type", "modal")  # Add type field, default to modal
     }
     popup_event = Event(type="manual_popup", payload=popup_payload)
     asyncio.run_coroutine_threadsafe(event_queue.put(popup_event), loop)
@@ -649,6 +650,38 @@ def api_trigger_action():
     # from this synchronous Flask thread.
     asyncio.run_coroutine_threadsafe(event_queue.put(action_event), loop)
     return jsonify({"status": "ok"})
+
+@app.route('/api/system/reset', methods=['POST'])
+@login_required(roles=["admin"])
+def reset_system():
+    """
+    Resets the system by clearing schedule, notified matches, and popups.
+    """
+    schedule_file = os.path.join(STORAGE_PATH, 'schedule.json')
+    notified_matches_file = os.path.join(STORAGE_PATH, 'notified_matches.json')
+    popups_file = os.path.join(STORAGE_PATH, 'popups.json')
+
+    try:
+        # Delete schedule.json if it exists
+        if os.path.exists(schedule_file):
+            os.remove(schedule_file)
+            logger.info("Deleted schedule.json")
+
+        # Delete notified_matches.json if it exists
+        if os.path.exists(notified_matches_file):
+            os.remove(notified_matches_file)
+            logger.info("Deleted notified_matches.json")
+
+        # Clear popups.json by writing an empty list
+        _atomic_write(popups_file, [])
+        logger.info("Cleared popups.json")
+
+        return jsonify({"status": "ok", "message": "System reset successfully."})
+
+    except Exception as e:
+        logger.error(f"Failed to reset system: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 
 @app.route('/simulator')
 @login_required(roles=["admin"])

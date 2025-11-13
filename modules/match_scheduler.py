@@ -3,6 +3,8 @@ import json
 import logging
 import os
 from datetime import datetime, timedelta
+import tempfile
+import uuid
 
 from models.events import Event
 from models.config import Config
@@ -17,9 +19,22 @@ class MatchScheduler:
         self.config_file = os.path.join(self.storage_path, 'config.json')
         self.fields_dir = os.path.join(self.storage_path, 'fields')
         self.notified_matches_file = os.path.join(self.storage_path, 'notified_matches.json')
+        self.popups_file = os.path.join(self.storage_path, 'popups.json')
         self.interval = interval
         self.running = False
         self.notified_matches = self._load_notified_matches()
+
+    def _atomic_write(self, file_path, data):
+        try:
+            temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(file_path))
+            with os.fdopen(temp_fd, 'w') as temp_f:
+                json.dump(data, temp_f, indent=4)
+            os.replace(temp_path, file_path)
+            logger.debug(f"Successfully wrote to {file_path}")
+        except Exception as e:
+            logger.error(f"Failed to atomically write to {file_path}: {e}")
+            if 'temp_path' in locals() and os.path.exists(temp_path):
+                os.remove(temp_path)
 
     def _load_notified_matches(self):
         try:
@@ -29,8 +44,7 @@ class MatchScheduler:
             return set()
 
     def _save_notified_matches(self):
-        with open(self.notified_matches_file, 'w') as f:
-            json.dump(list(self.notified_matches), f)
+        self._atomic_write(self.notified_matches_file, list(self.notified_matches))
 
     def _load_json(self, file_path):
         try:
@@ -81,6 +95,7 @@ class MatchScheduler:
 
             active_matches_by_div = self._get_active_match_numbers()
             lead_matches = config.schedule_lead_matches
+            popups = self._load_json(self.popups_file) or []
 
             for division in schedule["divisions"]:
                 div_id = division["id"]
@@ -100,29 +115,31 @@ class MatchScheduler:
                     notification_key = f"{div_id}-{match_num}"
 
                     if is_upcoming and notification_key not in self.notified_matches:
-                        logger.info(f"Match {match_num} in division {div_id} is upcoming. Enqueuing notification.")
+                        logger.info(f"Match {match_num} in division {div_id} is upcoming. Creating popup notification.")
                         
                         teams_in_match = [team['number'] for alliance in match_info.get('alliances', []) for team in alliance.get('teams', [])]
                         
-                        event_payload = {
-                            "match_id": match_tuple,
-                            "teams": teams_in_match,
-                            "scheduled_time": match_info.get("timeScheduled"),
-                            "rooms": []
-                        }
-
+                        rooms_for_match = []
                         for room_id, room_data in config.rooms.items():
                             if any(team in room_data.get("teams", []) for team in teams_in_match):
-                                event_payload["rooms"].append(room_id)
+                                rooms_for_match.append(room_id)
 
-                        if event_payload["rooms"]:
-                            scheduled_event = Event(
-                                type="match_scheduled",
-                                payload=event_payload
-                            )
-                            await self.event_queue.put(scheduled_event.to_dict())
+                        if rooms_for_match:
+                            popup_message = f"Match {match_num} is starting soon. Teams: {', '.join(teams_in_match)}"
+                            popup = {
+                                "id": str(uuid.uuid4()),
+                                "room_ids": rooms_for_match,
+                                "message": popup_message,
+                                "duration": 30,
+                                "type": "toast",  # Match notifications should be toasts
+                                "source": "match_scheduler"
+                            }
+                            popups.append(popup)
+                            
                             self.notified_matches.add(notification_key)
-                            self._save_notified_matches()
+            
+            self._atomic_write(self.popups_file, popups)
+            self._save_notified_matches()
         except Exception as e:
             logger.error(f"An error occurred in the match scheduler loop: {e}", exc_info=True)
 

@@ -23,23 +23,25 @@
             <button id="modal-dismiss-btn" class="btn btn-primary">Dismiss</button>
         </div>
     </div>
+
+    <div id="toast-container"></div>
 </section>
 
 <script>
     const ROOM_ID = "{{ room_id }}";
     const TEAMS_IN_ROOM = {{ room_info.teams | tojson | safe }};
     let popupTimeout;
-    let currentPopupId = null;
+    let currentModalPopupId = null;
+    const activeToastIds = new Set();
 
-    function showPopup(message, duration = 10, popupId) {
-        console.log(`Showing popup: id=${popupId}, message=${message}, duration=${duration}`);
+    function showModalPopup(message, duration = 10, popupId) {
+        console.log(`Showing modal: id=${popupId}, message=${message}, duration=${duration}`);
         const modal = document.getElementById('modal-container');
         const messageEl = document.getElementById('modal-message');
         const dismissBtn = document.getElementById('modal-dismiss-btn');
 
-        currentPopupId = popupId;
+        currentModalPopupId = popupId;
 
-        // Clear any existing timer to prevent conflicts
         if (popupTimeout) {
             clearTimeout(popupTimeout);
         }
@@ -52,16 +54,50 @@
             if (popupTimeout) {
                 clearTimeout(popupTimeout);
             }
-            if (currentPopupId) {
-                console.log(`Dismissing popup via UI: id=${currentPopupId}`);
-                dismissPopup(currentPopupId);
-                currentPopupId = null; // Prevent re-dismissal
+            if (currentModalPopupId) {
+                console.log(`Dismissing modal via UI: id=${currentModalPopupId}`);
+                dismissPopup(currentModalPopupId);
+                currentModalPopupId = null;
             }
         };
 
         dismissBtn.onclick = hideModal;
 
         popupTimeout = setTimeout(hideModal, duration * 1000);
+    }
+
+    function showToastPopup(message, duration = 10, popupId) {
+        console.log(`Showing toast: id=${popupId}, message=${message}, duration=${duration}`);
+        if (activeToastIds.has(popupId)) {
+            console.log(`Toast ${popupId} is already active.`);
+            return;
+        }
+
+        const toastContainer = document.getElementById('toast-container');
+        const toast = document.createElement('div');
+        toast.className = 'toast';
+        toast.innerText = message;
+        toast.id = `toast-${popupId}`;
+
+        activeToastIds.add(popupId);
+        toastContainer.appendChild(toast);
+
+        // Animate in
+        setTimeout(() => {
+            toast.classList.add('show');
+        }, 100);
+
+        // Set timer to remove the toast
+        setTimeout(() => {
+            toast.classList.remove('show');
+            // Remove from DOM after transition
+            toast.addEventListener('transitionend', () => {
+                toast.remove();
+                activeToastIds.delete(popupId);
+                // Also inform the backend it's gone
+                dismissPopup(popupId);
+            });
+        }, duration * 1000);
     }
 
     async function dismissPopup(popupId) {
@@ -84,45 +120,39 @@
         }
     }
 
-    async function checkScheduledMatches() {
-        const response = await fetch('/api/scheduled_matches');
-        const data = await response.json();
-        
-        if (data && data.rooms && data.rooms.includes(ROOM_ID)) {
-            const teams = data.teams.join(', ');
-            showPopup(`Upcoming Match for ${teams}! Match: ${JSON.stringify(data.match_id)}`);
-        }
-    }
-
     async function checkManualPopups() {
-        console.log("Checking for manual popups...");
+        console.log("Checking for popups...");
         const response = await fetch('/api/popups');
         const popups = await response.json();
-        console.log("Received popups:", popups);
         
-        const roomPopup = popups.find(p => p && p.room_ids && p.room_ids.includes(ROOM_ID));
-        if (roomPopup) {
-            console.log(`Found popup for this room:`, roomPopup);
-            // Only show if it's not the one we are currently showing
-            if (roomPopup.id !== currentPopupId) {
-                console.log(`New popup found (current: ${currentPopupId}, new: ${roomPopup.id}). Showing it.`);
-                showPopup(roomPopup.message, roomPopup.duration, roomPopup.id);
-            } else {
-                console.log(`Popup ${roomPopup.id} is already being displayed.`);
+        const popupsForThisRoom = popups.filter(p => p && p.room_ids && p.room_ids.includes(ROOM_ID));
+        
+        // Handle Modals
+        const modalPopup = popupsForThisRoom.find(p => (p.type || 'modal') === 'modal');
+        if (modalPopup) {
+            if (modalPopup.id !== currentModalPopupId) {
+                console.log(`New modal found (current: ${currentModalPopupId}, new: ${modalPopup.id}). Showing it.`);
+                showModalPopup(modalPopup.message, modalPopup.duration, modalPopup.id);
             }
         } else {
-            console.log("No popups for this room.");
-            // If no popups are active for this room, ensure the modal is hidden
+            // If no modal is active for this room, ensure it's hidden
             const modal = document.getElementById('modal-container');
-            if (modal.style.display !== 'none' && currentPopupId) {
+            if (modal.style.display !== 'none' && currentModalPopupId) {
                  modal.style.display = 'none';
-                 currentPopupId = null;
+                 currentModalPopupId = null;
             }
         }
+
+        // Handle Toasts
+        const toastPopups = popupsForThisRoom.filter(p => p.type === 'toast');
+        toastPopups.forEach(toastPopup => {
+            if (!activeToastIds.has(toastPopup.id)) {
+                showToastPopup(toastPopup.message, toastPopup.duration, toastPopup.id);
+            }
+        });
     }
 
-    setInterval(checkScheduledMatches, 5000);
-    setInterval(checkManualPopups, 5000);
+    setInterval(checkManualPopups, 3000); // Check more frequently
 </script>
 
 <style>
@@ -188,6 +218,32 @@
     .modal-content p {
         font-size: 1.5rem;
         margin-bottom: 1.5rem;
+    }
+
+    #toast-container {
+        position: fixed;
+        bottom: 1rem;
+        left: 1rem;
+        z-index: 2000;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        max-width: 350px;
+    }
+    .toast {
+        background-color: var(--color-background-light);
+        color: var(--color-text);
+        padding: 1rem 1.5rem;
+        border-radius: 8px;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+        opacity: 0;
+        transform: translateX(-120%);
+        transition: opacity 0.4s ease, transform 0.4s ease;
+        border-left: 5px solid var(--color-primary);
+    }
+    .toast.show {
+        opacity: 1;
+        transform: translateX(0);
     }
 </style>
 {% endblock %}
