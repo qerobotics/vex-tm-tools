@@ -255,6 +255,12 @@ class EventProcessor:
         if field_id:
             field_state = await self._get_field_state(field_id)
             match_name = field_state.match_name
+
+        # If the event has a match name in its payload, it should take precedence
+        if event.payload and "match" in event.payload:
+            formatted_match_name = self._format_match_name(event.payload.get("match"))
+            if formatted_match_name:
+                match_name = formatted_match_name
         
         # Check for actions based on event type
         actions_to_run.extend(

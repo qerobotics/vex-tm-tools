@@ -97,6 +97,15 @@
                         {
                             "type": "lighting",
                             "preset_id": "4"
+                        },
+                        {
+                            "type": "lighting",
+                            "release_id": "2"
+                        },
+                        {
+                            "type": "lighting",
+                            "release_id": "4",
+                            "delay_s": 20
                         }
                     ]
                 }
