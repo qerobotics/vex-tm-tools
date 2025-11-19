@@ -365,6 +365,33 @@ class EventProcessor:
         except (FileNotFoundError, json.JSONDecodeError):
             return []
 
+    async def _find_active_field(self):
+        active_fields = []
+        try:
+            field_files = [f for f in os.listdir(self.fields_dir) if f.endswith('.json')]
+            for filename in field_files:
+                field_id = int(filename.replace('field', '').replace('.json', ''))
+                state = await self._get_field_state(field_id)
+                if state.state == 'active':
+                    active_fields.append(state)
+        except Exception as e:
+            logger.error(f"Error finding active fields: {e}")
+            return None
+
+        if not active_fields:
+            return None
+
+        if len(active_fields) == 1:
+            logger.info(f"Found active field: {active_fields[0].field_id}")
+            return active_fields[0].field_id
+
+        # Sort by last_updated timestamp descending to find the most recent
+        active_fields.sort(key=lambda x: x.last_updated, reverse=True)
+        
+        latest_field = active_fields[0]
+        logger.info(f"Found multiple active fields. Selecting the most recent: {latest_field.field_id}")
+        return latest_field.field_id
+
     async def process_events(self):
         logger.info("Event processor started.")
         while True:
@@ -382,6 +409,13 @@ class EventProcessor:
 
                 # 2. Trigger actions based on the event itself AND any state change
                 await self._trigger_actions(event, old_state, new_state)
+
+                # If the event is an audienceDisplayChanged without a field, find the active field
+                if not event.field and event.type == "audienceDisplayChanged":
+                    active_field = await self._find_active_field()
+                    if active_field:
+                        event.field = active_field
+                        logger.info(f"Attributed audienceDisplayChanged event to active field {active_field}")
 
                 self.event_queue.task_done()
             except Exception as e:
