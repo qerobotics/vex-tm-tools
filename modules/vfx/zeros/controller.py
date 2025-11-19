@@ -32,7 +32,10 @@ class ZerOSController:
                 logger.error(f"An unexpected error occurred during custom ZerOS OSC action: {e}")
             return
 
-        target_id = action.preset_id
+        if action.command == "release" and action.release_id:
+            target_id = action.release_id
+        else:
+            target_id = action.preset_id
         target_type = action.target_type or 'playback'
         command = action.command or 'go'
 
