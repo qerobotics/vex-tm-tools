@@ -21,7 +21,17 @@ class ZerOSController:
         if not self.client:
             logger.error("ZerOS OSC client not initialized. Cannot execute action.")
             return
-        
+
+        if action.osc_address:
+            address = action.osc_address
+            logger.info(f"Executing custom ZerOS OSC action: Address: {address}")
+            try:
+                self.client.send_message(address, None)
+                logger.info(f"Sent OSC message to {address} with value None")
+            except Exception as e:
+                logger.error(f"An unexpected error occurred during custom ZerOS OSC action: {e}")
+            return
+
         target_id = action.preset_id
         target_type = action.target_type or 'playback'
         command = action.command or 'go'
@@ -40,9 +50,8 @@ class ZerOSController:
                 target_id_num = int(target_id)
 
             address = f"/zeros/{target_type}/{command}/{target_id_num}"
-            value = 1.0
-
-            logger.debug(f"Constructed OSC address: {address} with value: {value}")
+            
+            logger.debug(f"Constructed OSC address: {address}")
             self.client.send_message(address, None)
             logger.info(f"Sent OSC message to {address}")
 
