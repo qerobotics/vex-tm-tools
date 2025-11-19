@@ -399,6 +399,13 @@ class EventProcessor:
                 event = await self.event_queue.get()
                 logger.info(f"Processing event: {event.to_json()}")
 
+                # If the event is an audienceDisplayChanged without a field, find the active field
+                if not event.field and event.type == "audienceDisplayChanged":
+                    active_field = await self._find_active_field()
+                    if active_field:
+                        event.field = active_field
+                        logger.info(f"Attributed audienceDisplayChanged event to active field {active_field}")
+
                 # Handle special, non-field-related events first
                 if await self._handle_special_events(event):
                     self.event_queue.task_done()
@@ -409,13 +416,6 @@ class EventProcessor:
 
                 # 2. Trigger actions based on the event itself AND any state change
                 await self._trigger_actions(event, old_state, new_state)
-
-                # If the event is an audienceDisplayChanged without a field, find the active field
-                if not event.field and event.type == "audienceDisplayChanged":
-                    active_field = await self._find_active_field()
-                    if active_field:
-                        event.field = active_field
-                        logger.info(f"Attributed audienceDisplayChanged event to active field {active_field}")
 
                 self.event_queue.task_done()
             except Exception as e:
