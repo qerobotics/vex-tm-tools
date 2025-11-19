@@ -192,22 +192,37 @@ class EventProcessor:
     def _format_match_name(self, match_obj):
         if not match_obj:
             return None
-        
-        # Handle direct string match names from simulation
+
         if isinstance(match_obj, str):
             return match_obj
 
         if not isinstance(match_obj, dict):
             return None
-        
+
         round_val = match_obj.get("round")
-        if not round_val or not isinstance(round_val, str) or len(round_val) == 0:
-            # If round isn't a valid string, we can't generate a prefix.
-            # We could fall back to the match number, but returning None is safer
-            # to indicate that a proper name could not be formed.
+        if round_val is None:
             return None
 
-        round_prefix = round_val[0].upper()
+        round_map = {
+            # By string (lowercase)
+            "QUAL": "Q",
+            "TOP_N": "F",
+        }
+
+        round_prefix = None
+        if isinstance(round_val, int):
+            round_prefix = round_map.get(round_val)
+        elif isinstance(round_val, str):
+            round_prefix = round_map.get(round_val.lower())
+
+        if round_prefix is None:
+            logger.warning(f"Could not find a prefix for round '{round_val}'.")
+            # Fallback to first letter if it's a string
+            if isinstance(round_val, str) and len(round_val) > 0:
+                round_prefix = round_val[0].upper()
+            else:
+                return None # Cannot determine prefix
+
         return f"{round_prefix}{match_obj.get('match', '')}"
 
     def _determine_new_state(self, event, current_state):
@@ -243,7 +258,7 @@ class EventProcessor:
         
         # Check for actions based on event type
         actions_to_run.extend(
-            self.action_mappings.get_actions(self.action_mappings.on_event, event.type, field_id, match_name)
+            self.action_mappings.get_actions(self.action_mappings.on_event, event.type, field_id, match_name, event.payload)
         )
 
         # Check for actions based on state change

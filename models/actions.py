@@ -42,52 +42,60 @@ class ActionMapping(BaseModel):
         self.on_event = on_event or {}
         self.on_state_change = on_state_change or {}
 
-    def get_actions(self, category, key, field_id=None, match_name=None):
+    def get_actions(self, category, key, field_id=None, match_name=None, event_payload=None):
         """
         Retrieves actions for a given category (e.g., 'on_event'), key (e.g., 'matchStarted'),
-        and optional field_id and match_name.
+        and optional field_id, match_name, and event_payload.
         
-        It aggregates actions based on match name patterns ('*') and field IDs,
+        It aggregates actions based on match name patterns, payload filters, and field IDs,
         then filters for the highest priority action per type.
         """
-        logger.debug(f"Getting actions for category='{key}', field_id='{field_id}', match_name='{match_name}'")
+        logger.debug(f"Getting actions for category='{key}', field_id='{field_id}', match_name='{match_name}', payload='{event_payload}'")
         all_actions = []
         
         action_groups = category.get(key, [])
         logger.debug(f"Found action groups: {action_groups}")
 
-        # For backward compatibility with the old format (dict or list)
-        if isinstance(action_groups, dict):
-            # It's the format with "all" and field numbers
-            all_actions.extend(action_groups.get("all", []))
-            if field_id:
-                all_actions.extend(action_groups.get(str(field_id), []))
-            return all_actions
         if not isinstance(action_groups, list):
-            # If it's not a dict or list, it's an unknown format.
             return []
 
-        # New format: list of {"match_name": "...", "fields": {...}}
         for group in action_groups:
             group_match_name = group.get("match_name", "*")
-            logger.debug(f"Evaluating group with match_name pattern: '{group_match_name}'")
             
-            # Check if the match name pattern matches
-            if match_name and fnmatch.fnmatch(match_name, group_match_name):
-                logger.debug(f"Match! Current match_name '{match_name}' matches pattern '{group_match_name}'.")
-                fields = group.get("fields", {})
+            # 1. Check payload filter
+            payload_filter = group.get("payload_filter")
+            if payload_filter:
+                if not event_payload:
+                    logger.debug("Group has payload_filter but event has no payload. Skipping.")
+                    continue
                 
-                # Combine actions from "all" and the specific field
-                potential_actions = fields.get("all", []) + (fields.get(str(field_id), []) if field_id else [])
+                payload_match = all(event_payload.get(k) == v for k, v in payload_filter.items())
                 
-                for action_data in potential_actions:
-                    # Add the matched pattern's priority to the action for ranking
-                    action_data_copy = action_data.copy()
-                    action_data_copy['priority'] = action_data.get('priority', 0)
-                    all_actions.append(action_data_copy)
+                if not payload_match:
+                    logger.debug(f"Payload filter mismatch. Event: {event_payload}, Filter: {payload_filter}. Skipping.")
+                    continue
+                logger.debug("Payload filter matched.")
 
-            else:
-                logger.debug(f"No match. Current match_name '{match_name}' does not match pattern '{group_match_name}'.")
+            # 2. Check match name pattern
+            # If match_name is None (e.g. for non-match events), it should only match '*'
+            if match_name is None:
+                if group_match_name != "*":
+                    logger.debug(f"No match_name in event, but group requires '{group_match_name}'. Skipping.")
+                    continue
+            elif not fnmatch.fnmatch(match_name, group_match_name):
+                logger.debug(f"Match name '{match_name}' does not match pattern '{group_match_name}'. Skipping.")
+                continue
+            
+            logger.debug(f"Match! Name:'{match_name}' vs Pattern:'{group_match_name}'.")
+            
+            # 3. Collect actions if filters passed
+            fields = group.get("fields", {})
+            potential_actions = fields.get("all", []) + (fields.get(str(field_id), []) if field_id else [])
+            
+            for action_data in potential_actions:
+                action_data_copy = action_data.copy()
+                action_data_copy['priority'] = action_data.get('priority', 0)
+                all_actions.append(action_data_copy)
         
         # Prioritize and filter actions
         actions_by_type = {}
@@ -104,10 +112,8 @@ class ActionMapping(BaseModel):
             if not typed_actions:
                 continue
             
-            # Find the highest priority in this group
             max_priority = max(a.get('priority', 0) for a in typed_actions)
 
-            # Collect all actions with that highest priority
             for action in typed_actions:
                 if action.get('priority', 0) == max_priority:
                     final_actions.append(action)

@@ -1,5 +1,34 @@
 {
     "on_event": {
+        "fieldActivated": [
+            {
+                "match_name": "*",
+                "fields": {
+                    "1": [
+                        {
+                            "type": "lighting",
+                            "preset_id": "1"
+                        }
+                    ]
+                }
+            }
+        ],
+        "audienceDisplayChanged": [
+            {
+                "match_name": "*",
+                "payload_filter": {
+                    "display": "IN_MATCH"
+                },
+                "fields": {
+                    "all": [
+                        {
+                            "type": "lighting",
+                            "preset_id": "2"
+                        }
+                    ]
+                }
+            }
+        ],
         "matchStarted": [
             {
                 "match_name": "Q*",
