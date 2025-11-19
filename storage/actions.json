@@ -31,7 +31,7 @@
         ],
         "matchStarted": [
             {
-                "match_name": "Q*",
+                "match_name": "*",
                 "fields": {
                     "all": [
                         {
@@ -57,21 +57,6 @@
                                 "start_time_s": 30
                             },
                             "priority": 2
-                        }
-                    ]
-                }
-            },
-            {
-                "match_name": "F*",
-                "fields": {
-                    "all": [
-                        {
-                            "type": "audio",
-                            "command": "play_playlist_track",
-                            "metadata": {
-                                "playlist_uri": "spotify:playlist:37i9dQZF1DX3KVUsNUmJc2"
-                            },
-                            "priority": 1
                         }
                     ]
                 }
