@@ -43,7 +43,7 @@ class ZerOSController:
             value = 1.0
 
             logger.debug(f"Constructed OSC address: {address} with value: {value}")
-            self.client.send_message(address, value)
+            self.client.send_message(address)
             logger.info(f"Sent OSC message to {address}")
 
         except (ValueError, TypeError):
