@@ -27,10 +27,12 @@ class VideoAction(Action):
 @dataclass
 class LightingAction(Action):
     preset_id: Optional[str] = None
+    release_id: Optional[str] = None
     target_type: Optional[str] = "playback"  # 'cue' or 'playback'
     command: Optional[str] = "go"  # 'release', 'go', 'pause', 'next'
     osc_address: Optional[str] = None
     osc_value: Optional[float] = None
+    delay_s: Optional[int] = None
     type: str = "lighting"
 
 import fnmatch
