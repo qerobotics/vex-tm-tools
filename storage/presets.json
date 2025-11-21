@@ -1,8 +1,16 @@
 {
     "lighting": [
         {
-            "name": "1",
+            "name": "Field 1 R",
             "preset_id": 1
+        },
+        {
+            "name": "Field 1 C",
+            "preset_id": 2
+        },
+        {
+            "name": "Field 1 E",
+            "preset_id": 4
         }
     ]
 }

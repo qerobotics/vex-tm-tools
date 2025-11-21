@@ -9,6 +9,18 @@
                             "type": "lighting",
                             "preset_id": "1"
                         }
+                    ],
+                    "2": [
+                        {
+                            "type": "lighting",
+                            "preset_id": "7"
+                        }
+                    ],
+                    "3": [
+                        {
+                            "type": "lighting",
+                            "preset_id": "13"
+                        }
                     ]
                 }
             }
@@ -24,6 +36,18 @@
                         {
                             "type": "lighting",
                             "preset_id": "2"
+                        }
+                    ],
+                    "2": [
+                        {
+                            "type": "lighting",
+                            "preset_id": "8"
+                        }
+                    ],
+                    "3": [
+                        {
+                            "type": "lighting",
+                            "preset_id": "14"
                         }
                     ]
                 }
@@ -42,39 +66,29 @@
                             },
                             "priority": 1
                         }
-                    ]
-                }
-            },
-            {
-                "match_name": "F1",
-                "fields": {
-                    "all": [
+                    ],
+                    "1": [
                         {
-                            "type": "audio",
-                            "command": "play_track",
-                            "metadata": {
-                                "track_uri": "spotify:track:08mG3Y1vljYA6bvDt4Wqkj",
-                                "start_time_s": 30
-                            },
-                            "priority": 2
+                            "type": "lighting",
+                            "preset_id": "3"
+                        }
+                    ],
+                    "2": [
+                        {
+                            "type": "lighting",
+                            "preset_id": "9"
+                        }
+                    ],
+                    "3": [
+                        {
+                            "type": "lighting",
+                            "preset_id": "15"
                         }
                     ]
                 }
             }
         ],
         "matchStopped": [
-            {
-                "match_name": "*",
-                "fields": {
-                    "all": [
-                        {
-                            "type": "audio",
-                            "command": "pause",
-                            "priority": 0
-                        }
-                    ]
-                }
-            },
             {
                 "match_name": "*",
                 "fields": {
@@ -86,11 +100,26 @@
                         {
                             "type": "lighting",
                             "release_id": "2"
+                        }
+                    ],
+                    "2": [
+                        {
+                            "type": "lighting",
+                            "preset_id": "10"
                         },
                         {
                             "type": "lighting",
-                            "release_id": "4",
-                            "delay_s": 20
+                            "release_id": "2"
+                        }
+                    ],
+                    "3": [
+                        {
+                            "type": "lighting",
+                            "preset_id": "16"
+                        },
+                        {
+                            "type": "lighting",
+                            "release_id": "2"
                         }
                     ]
                 }
