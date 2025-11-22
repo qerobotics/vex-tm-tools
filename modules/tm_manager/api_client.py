@@ -34,12 +34,13 @@ class VexTmApiClient:
                 url,
                 auth=(self.client_id, self.client_secret),
                 data={"grant_type": "client_credentials"},
-                timeout=10  # Add a 10-second timeout
+                timeout=10
             )
             response.raise_for_status()
             token_data = response.json()
             self.token = token_data["access_token"]
             expires_in = token_data.get("expires_in", 3600)
+            # Buffer expiration by 60 seconds
             self.token_expires = datetime.now(timezone.utc) + timedelta(seconds=expires_in - 60)
             logger.info("Successfully obtained new VEX TM auth token.")
             return self.token
@@ -51,18 +52,13 @@ class VexTmApiClient:
     def create_signature(self, http_verb, uri_path, host, date):
         """
         Creates the HMAC-SHA256 signature for a request.
-        According to VEX TM API spec:
-        StringToSign = HTTP Verb + "\n" +
-                       URI Path and Query string + "\n" +
-                       "token:" + {BearerToken} + "\n" +
-                       "host:" + Host header value + "\n" +
-                       "x-tm-date:" + {Date} + "\n"
         """
         if not self.token:
             self.get_auth_token()
         if not self.token:
             raise Exception("Cannot create signature without an auth token.")
 
+        # FIX 1: Ensure no trailing newline after the date
         string_to_sign = (
             f"{http_verb.upper()}\n"
             f"{uri_path}\n"
@@ -71,16 +67,18 @@ class VexTmApiClient:
             f"x-tm-date:{date}"
         )
         
-        logger.debug(f"String to sign:\n{repr(string_to_sign)}")
-        logger.debug(f"API key (first 10 chars): {self.api_key[:10]}...")
-        
-        signature = hmac.new(
-            self.api_key.encode(),
-            string_to_sign.encode(),
+        # logger.debug(f"String to sign:\n{repr(string_to_sign)}")
+
+        # FIX 2: Use .digest() instead of .hexdigest(), then Base64 encode it
+        signature_bytes = hmac.new(
+            self.api_key.encode('utf-8'),
+            string_to_sign.encode('utf-8'),
             hashlib.sha256
-        ).hexdigest()
+        ).digest()
         
-        logger.debug(f"Generated HMAC-SHA256 signature: {signature}")
+        signature = base64.b64encode(signature_bytes).decode('utf-8')
+        
+        # logger.debug(f"Generated Base64 HMAC-SHA256 signature: {signature}")
         return signature
 
     def get(self, endpoint):
@@ -97,8 +95,14 @@ class VexTmApiClient:
         host = parsed_url.netloc
         uri_path = parsed_url.path
         
+        # Ensure consistent date formatting
         date = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
-        signature = self.create_signature("GET", uri_path, host, date)
+        
+        try:
+            signature = self.create_signature("GET", uri_path, host, date)
+        except Exception as e:
+            logger.error(f"Failed to create signature: {e}")
+            return None
 
         headers = {
             "Host": host,
@@ -108,10 +112,13 @@ class VexTmApiClient:
         }
 
         try:
-            logger.info(f"Making GET request to {url}")
-            response = requests.get(url, headers=headers, timeout=10)  # Add a 10-second timeout
+            # logger.info(f"Making GET request to {url}")
+            response = requests.get(url, headers=headers, timeout=10)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
             logger.error(f"Error during GET request to {url}: {e}")
+            # Log response text for debugging 401s to see if server gives specific hints
+            if hasattr(e, 'response') and e.response is not None:
+                logger.error(f"Response content: {e.response.text}")
             return None
