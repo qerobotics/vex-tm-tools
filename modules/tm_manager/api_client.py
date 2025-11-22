@@ -13,7 +13,7 @@ class VexTmApiClient:
     def __init__(self, client_id, client_secret, api_key, base_url):
         self.client_id = client_id
         self.client_secret = client_secret
-        self.api_key = api_key
+        self.api_key = api_key.strip() if api_key else api_key
         self.base_url = base_url
         self.token = None
         self.token_expires = datetime.now(timezone.utc)
@@ -72,6 +72,7 @@ class VexTmApiClient:
         )
         
         logger.debug(f"String to sign:\n{repr(string_to_sign)}")
+        logger.debug(f"API key length: {len(self.api_key)}")
         logger.debug(f"API key (first 10 chars): {self.api_key[:10]}...")
         
         signature = hmac.new(
