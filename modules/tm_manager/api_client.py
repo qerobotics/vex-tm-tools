@@ -68,7 +68,7 @@ class VexTmApiClient:
             f"{uri_path}\n"
             f"token:{self.token}\n"
             f"host:{host}\n"
-            f"x-tm-date:{date}\n"
+            f"x-tm-date:{date}"
         )
         
         logger.debug(f"String to sign:\n{repr(string_to_sign)}")
@@ -81,7 +81,6 @@ class VexTmApiClient:
         ).hexdigest()
         
         logger.debug(f"Generated HMAC-SHA256 signature: {signature}")
-        return signature
         return signature
 
     def get(self, endpoint):
