@@ -1,8 +1,8 @@
 import requests
 import hmac
 import hashlib
+import base64
 import logging
-import email.utils
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse
 
@@ -13,10 +13,8 @@ class VexTmApiClient:
     def __init__(self, client_id, client_secret, api_key, base_url):
         self.client_id = client_id
         self.client_secret = client_secret
-        # CRITICAL: Strip whitespace from API Key. 
-        # Copy-paste often adds a hidden space at the end which breaks the hash.
-        self.api_key = api_key.strip()
-        self.base_url = base_url.rstrip('/') # Ensure no double slashes later
+        self.api_key = api_key
+        self.base_url = base_url
         self.token = None
         self.token_expires = datetime.now(timezone.utc)
 
@@ -36,7 +34,7 @@ class VexTmApiClient:
                 url,
                 auth=(self.client_id, self.client_secret),
                 data={"grant_type": "client_credentials"},
-                timeout=10
+                timeout=10  # Add a 10-second timeout
             )
             response.raise_for_status()
             token_data = response.json()
@@ -50,40 +48,40 @@ class VexTmApiClient:
             self.token = None
             return None
 
-    def create_signature(self, http_verb, uri_path_query, host, date_str):
+    def create_signature(self, http_verb, uri_path, host, date):
         """
         Creates the HMAC-SHA256 signature for a request.
-        Spec:
+        According to VEX TM API spec:
         StringToSign = HTTP Verb + "\n" +
                        URI Path and Query string + "\n" +
                        "token:" + {BearerToken} + "\n" +
                        "host:" + Host header value + "\n" +
                        "x-tm-date:" + {Date} + "\n"
-        Signature = Hex(HMAC-SHA256({APIKey}, {StringToSign}))
         """
         if not self.token:
             self.get_auth_token()
         if not self.token:
             raise Exception("Cannot create signature without an auth token.")
 
-        # Note: The spec explicitly requires a trailing newline after the date.
         string_to_sign = (
             f"{http_verb.upper()}\n"
-            f"{uri_path_query}\n"
+            f"{uri_path}\n"
             f"token:{self.token}\n"
             f"host:{host}\n"
-            f"x-tm-date:{date_str}\n"
+            f"x-tm-date:{date}\n"
         )
         
-        # logger.debug(f"String to sign:\n{repr(string_to_sign)}")
+        logger.debug(f"String to sign:\n{repr(string_to_sign)}")
+        logger.debug(f"API key (first 10 chars): {self.api_key[:10]}...")
         
-        # Encode key and message to UTF-8 to be safe
         signature = hmac.new(
-            self.api_key.encode('utf-8'),
-            string_to_sign.encode('utf-8'),
+            self.api_key.encode(),
+            string_to_sign.encode(),
             hashlib.sha256
-        ).hexdigest() # DOCS: Use Hex, not Base64
+        ).hexdigest()
         
+        logger.debug(f"Generated HMAC-SHA256 signature: {signature}")
+        return signature
         return signature
 
     def get(self, endpoint):
@@ -95,43 +93,26 @@ class VexTmApiClient:
             logger.error(f"Cannot make GET request to {endpoint}, no auth token.")
             return None
 
-        # Handle endpoint formatting
-        if not endpoint.startswith('/'):
-            endpoint = f"/{endpoint}"
-            
         url = f"{self.base_url}{endpoint}"
         parsed_url = urlparse(url)
         host = parsed_url.netloc
+        uri_path = parsed_url.path
         
-        # Reconstruct Path + Query
-        # If url is /api/teams?division=1, we need strictly that part.
-        uri_path_query = parsed_url.path
-        if parsed_url.query:
-            uri_path_query += f"?{parsed_url.query}"
-        
-        # Generate RFC1123 Date using email.utils to prevent locale issues (e.g., 'Sat' vs 'Sam')
-        date_str = email.utils.formatdate(usegmt=True)
-        
-        try:
-            signature = self.create_signature("GET", uri_path_query, host, date_str)
-        except Exception as e:
-            logger.error(f"Failed to create signature: {e}")
-            return None
+        date = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
+        signature = self.create_signature("GET", uri_path, host, date)
 
         headers = {
             "Host": host,
             "Authorization": f"Bearer {self.token}",
-            "x-tm-date": date_str,
+            "x-tm-date": date,
             "x-tm-signature": signature
         }
 
         try:
-            # logger.info(f"Making GET request to {url}")
-            response = requests.get(url, headers=headers, timeout=10)
+            logger.info(f"Making GET request to {url}")
+            response = requests.get(url, headers=headers, timeout=10)  # Add a 10-second timeout
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
             logger.error(f"Error during GET request to {url}: {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                 logger.error(f"Response content: {e.response.text}")
             return None
