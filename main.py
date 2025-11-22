@@ -48,7 +48,7 @@ async def main():
     client_secret = vex_tm_api_config.get("client_secret")
     api_key = vex_tm_api_config.get("api_key")
     base_url = vex_tm_api_config.get("base_url", "http://localhost:8080")
-    field_set_id = int(os.environ.get("VEX_TM_FIELD_SET_ID", 1)) # This can remain an env var for instance-specific setup
+    field_set_id = int(vex_tm_api_config.get("field_set_id", os.environ.get("VEX_TM_FIELD_SET_ID", 1)))
 
     if not all([client_id, client_secret, api_key]):
         logger.error("Missing required VEX TM API configuration in config.json. Please set client_id, client_secret, and api_key under the 'vex_tm_api' key.")
