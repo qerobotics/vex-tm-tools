@@ -1,10 +1,9 @@
 # VEX TM Manager Spotify Sync + Other Tools
 ## What will this do?
 1. Connect to TM Manager via the TM Manager Public API and track match starts, ends, and updates to audience displays using the Field Set Websocket
-2. Connect to the Spotify API and play music in time with match starts, from a predefined list stored in a json file
-3. Connect to the ATEM Switcher and automatically switch cameras depending on which field is active
+2. Connect to the Spotify API and play music after being triggered from button, which will also trigger a timer, from a predefined list stored in a json file
+3. Connect to the ATEM Switcher and automatically switch cameras depending on which field is active (Only for V5RC)
 4. Connect to a ZerOS lighting board and switch lighting using OSC. Lighting will follow this pattern: Queued field ready, Countdown, Active, Finish, Restart
-5. (Hopefully) Control the PTZ Module attatched to the camera using a micro-controller connected to a servo, such as a Raspberry Pi or Arduino (Avi's Idea)
 
 ## Contribution Guidelines (READ THESE)
 * DON'T TOUCH THE CODE UNLESS YOU KNOW WHAT YOU'RE DOING
@@ -54,7 +53,3 @@ ready= 2 red on field about to start match, 1 blue on other 2
 countdown= 2 red on field about to start match, other 2 blue lights flash with countdown  
 match= 2 white on field with match, 1 blue on other 2   
 finish= all lights flash white, spin around and go back to standby  
-
-## PTZ Module
-No clue how we're gonna do this
-Planning to use humans 
