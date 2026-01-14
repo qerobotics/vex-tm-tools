@@ -15,6 +15,7 @@ import traceback
 from models.fields import FieldState
 from models.config import Config
 from models.events import Event
+from models.timer import Timer, TimerMilestone, TimerState
 from userManager import UserManager
 
 # This is a placeholder for where the event queue would be shared
@@ -112,6 +113,8 @@ CONFIG_FILE = os.path.join(STORAGE_PATH, 'config.json')
 SCHEDULED_MATCHES_FILE = os.path.join(STORAGE_PATH, 'scheduled_matches.json')
 POPUPS_FILE = os.path.join(STORAGE_PATH, 'popups.json')
 PRESETS_FILE = os.path.join(STORAGE_PATH, 'presets.json')
+TIMERS_SAVED_FILE = os.path.join(STORAGE_PATH, 'timers_saved.json')
+TIMER_STATE_FILE = os.path.join(STORAGE_PATH, 'timer_state.json')
 
 def _atomic_write(file_path, data):
     try:
@@ -828,6 +831,324 @@ def stream_logs():
                 yield ": keep-alive\n\n"
             time.sleep(0.1) # Prevent tight loop
     return Response(generate(), mimetype='text/event-stream')
+
+# ============================================================================
+# Timer Management Routes
+# ============================================================================
+
+@app.route('/timer_admin')
+@login_required(roles=["admin"])
+def timer_admin():
+    """Timer administration page for creating and managing timers"""
+    return render_template('timer_admin.html')
+
+@app.route('/timer/<timer_id>')
+def timer_view(timer_id):
+    """Public timer viewer page - no authentication required"""
+    timers = _read_json(TIMERS_SAVED_FILE, {})
+    if timer_id not in timers:
+        return render_template('error.html', error_code=404, error_message="Timer not found"), 404
+    return render_template('timer.html', timer_id=timer_id)
+
+@app.route('/api/timers', methods=['GET'])
+@login_required(roles=["admin"])
+def api_timers_list():
+    """Get all saved timers"""
+    timers = _read_json(TIMERS_SAVED_FILE, {})
+    return jsonify(timers)
+
+@app.route('/api/timers/status', methods=['GET'])
+@login_required(roles=["admin"])
+def api_timers_status():
+    """Get status of all timers"""
+    timers = _read_json(TIMERS_SAVED_FILE, {})
+    timer_states = _read_json(TIMER_STATE_FILE, {})
+    current_time = time.time()
+    
+    results = {}
+    for timer_id, timer_data in timers.items():
+        state = timer_states.get(timer_id, {})
+        is_running = state.get('is_running', False)
+        end_timestamp = state.get('end_timestamp', current_time)
+        
+        if is_running:
+            remaining = max(0, end_timestamp - current_time)
+            elapsed = state.get('duration', 0) - remaining
+        else:
+            # Timer has finished or stopped
+            if end_timestamp <= current_time and state.get('start_timestamp'):
+                # Show elapsed time since finish
+                elapsed = current_time - end_timestamp
+                remaining = -elapsed  # Negative to indicate overtime
+            else:
+                # Timer was stopped before completion or never started
+                start_ts = state.get('start_timestamp')
+                if start_ts:
+                     elapsed = current_time - start_ts
+                else:
+                    elapsed = 0
+                remaining = timer_data['duration'] # Reset to duration if stopped/reset
+        
+        results[timer_id] = {
+            "is_running": is_running,
+            "remaining": remaining,
+            "elapsed": elapsed,
+            "duration": timer_data['duration']
+        }
+    return jsonify(results)
+
+@app.route('/api/timers', methods=['POST'])
+@login_required(roles=["admin"])
+def api_timers_create():
+    """Create a new timer"""
+    try:
+        data = request.json
+        timer_id = data.get('timer_id')
+        if not timer_id:
+            timer_id = str(uuid.uuid4())
+        
+        name = data.get('name')
+        if not name:
+             name = "Untitled Timer"
+
+        # Parse milestones
+        milestones = []
+        for m_data in data.get('milestones', []):
+            milestone = TimerMilestone(
+                time_remaining=m_data['time_remaining'],
+                action_type=m_data['action_type'],
+                action_payload=m_data['action_payload'],
+                message=m_data.get('message')
+            )
+            milestones.append(milestone)
+        
+        # Create timer object
+        timer = Timer(
+            timer_id=timer_id,
+            name=name,
+            duration=data['duration'],
+            milestones=milestones,
+            field_id=data.get('field_id')
+        )
+        
+        # Save to storage
+        timers = _read_json(TIMERS_SAVED_FILE, {})
+        timers[timer_id] = timer.to_dict()
+        _atomic_write(TIMERS_SAVED_FILE, timers)
+        
+        return jsonify({"status": "ok", "timer_id": timer_id, "timer": timer.to_dict()})
+    except Exception as e:
+        logger.error(f"Error creating timer: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": str(e)}), 400
+
+@app.route('/api/timer/<timer_id>', methods=['GET'])
+@login_required(roles=["admin"])
+def api_timer_get(timer_id):
+    """Get a specific timer configuration"""
+    timers = _read_json(TIMERS_SAVED_FILE, {})
+    if timer_id not in timers:
+        return jsonify({"status": "error", "message": "Timer not found"}), 404
+    return jsonify(timers[timer_id])
+
+@app.route('/api/timer/<timer_id>', methods=['PUT'])
+@login_required(roles=["admin"])
+def api_timer_update(timer_id):
+    """Update a timer configuration"""
+    try:
+        data = request.json
+        
+        name = data.get('name')
+        if not name:
+             name = "Untitled Timer"
+
+        # Parse milestones
+        milestones = []
+        for m_data in data.get('milestones', []):
+            milestone = TimerMilestone(
+                time_remaining=m_data['time_remaining'],
+                action_type=m_data['action_type'],
+                action_payload=m_data['action_payload'],
+                message=m_data.get('message')
+            )
+            milestones.append(milestone)
+        
+        # Create timer object
+        timer = Timer(
+            timer_id=timer_id,
+            name=name,
+            duration=data['duration'],
+            milestones=milestones,
+            field_id=data.get('field_id'),
+            created_at=data.get('created_at')
+        )
+        
+        # Save to storage
+        timers = _read_json(TIMERS_SAVED_FILE, {})
+        timers[timer_id] = timer.to_dict()
+        _atomic_write(TIMERS_SAVED_FILE, timers)
+        
+        return jsonify({"status": "ok", "timer": timer.to_dict()})
+    except Exception as e:
+        logger.error(f"Error updating timer: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": str(e)}), 400
+
+@app.route('/api/timer/<timer_id>', methods=['DELETE'])
+@login_required(roles=["admin"])
+def api_timer_delete(timer_id):
+    """Delete a timer"""
+    timers = _read_json(TIMERS_SAVED_FILE, {})
+    if timer_id not in timers:
+        return jsonify({"status": "error", "message": "Timer not found"}), 404
+    
+    del timers[timer_id]
+    _atomic_write(TIMERS_SAVED_FILE, timers)
+    
+    # Also remove from active state
+    timer_states = _read_json(TIMER_STATE_FILE, {})
+    if timer_id in timer_states:
+        del timer_states[timer_id]
+        _atomic_write(TIMER_STATE_FILE, timer_states)
+    
+    return jsonify({"status": "ok"})
+
+@app.route('/api/timer/<timer_id>/start', methods=['POST'])
+@login_required(roles=["admin"])
+def api_timer_start(timer_id):
+    """Start a timer"""
+    timers = _read_json(TIMERS_SAVED_FILE, {})
+    if timer_id not in timers:
+        return jsonify({"status": "error", "message": "Timer not found"}), 404
+    
+    timer_data = timers[timer_id]
+    duration = timer_data['duration']
+    
+    current_time = time.time()
+    end_time = current_time + duration
+    
+    # Enqueue timer_started event
+    event = Event(
+        type="timer_started",
+        field=None,
+        payload={
+            "timer_id": timer_id,
+            "start_timestamp": current_time,
+            "end_timestamp": end_time,
+            "duration": duration
+        }
+    )
+    asyncio.run_coroutine_threadsafe(event_queue.put(event), loop)
+    
+    return jsonify({
+        "status": "ok",
+        "start_timestamp": current_time,
+        "end_timestamp": end_time
+    })
+
+@app.route('/api/timer/<timer_id>/stop', methods=['POST'])
+@login_required(roles=["admin"])
+def api_timer_stop(timer_id):
+    """Stop a timer"""
+    if not event_queue or not loop:
+        logging.getLogger(__name__).error("Event queue or loop not initialized")
+        return jsonify({"status": "error", "message": "Service not ready"}), 500
+    
+    # Verify timer exists
+    timers = _read_json(TIMERS_SAVED_FILE, {})
+    if timer_id not in timers:
+        return jsonify({"status": "error", "message": "Timer not found"}), 404
+    
+    # Verify timer is in states (it should be if it's running)
+    timer_states = _read_json(TIMER_STATE_FILE, {})
+    if timer_id not in timer_states:
+        logging.getLogger(__name__).warning(f"Timer {timer_id} not in states, but attempting to stop anyway")
+    
+    # Enqueue timer_stopped event
+    event = Event(
+        type="timer_stopped",
+        field=None,
+        payload={"timer_id": timer_id}
+    )
+    logging.getLogger(__name__).info(f"Stopping timer {timer_id}")
+    asyncio.run_coroutine_threadsafe(event_queue.put(event), loop)
+    
+    return jsonify({"status": "ok"})
+
+@app.route('/api/timer/<timer_id>/reset', methods=['POST'])
+@login_required(roles=["admin"])
+def api_timer_reset(timer_id):
+    """Reset a timer (stop it and clear state)"""
+    timer_states = _read_json(TIMER_STATE_FILE, {})
+    if timer_id in timer_states:
+        del timer_states[timer_id]
+        _atomic_write(TIMER_STATE_FILE, timer_states)
+    
+    return jsonify({"status": "ok"})
+
+@app.route('/api/timer/<timer_id>/state', methods=['GET'])
+def api_timer_state(timer_id):
+    """Get current timer state - public endpoint for viewer"""
+    timers = _read_json(TIMERS_SAVED_FILE, {})
+    if timer_id not in timers:
+        return jsonify({"status": "error", "message": "Timer not found"}), 404
+    
+    timer_data = timers[timer_id]
+    timer_states = _read_json(TIMER_STATE_FILE, {})
+    
+    current_time = time.time()
+    
+    if timer_id in timer_states:
+        state = timer_states[timer_id]
+        is_running = state.get('is_running', False)
+        end_timestamp = state.get('end_timestamp', current_time)
+        
+        if is_running:
+            remaining = max(0, end_timestamp - current_time)
+            elapsed = state.get('duration', 0) - remaining
+        else:
+            # Timer has finished or stopped
+            if end_timestamp <= current_time:
+                # Show elapsed time since finish
+                elapsed = current_time - end_timestamp
+                remaining = -elapsed  # Negative to indicate overtime
+            else:
+                # Timer was stopped before completion
+                elapsed = current_time - state.get('start_timestamp', current_time)
+                remaining = 0
+        
+        # Get current message if any
+        current_message = None
+        if is_running and remaining >= 0:
+            for milestone in timer_data.get('milestones', []):
+                if milestone.get('message') and remaining <= milestone['time_remaining']:
+                    current_message = milestone['message']
+                    break
+        
+        return jsonify({
+            "status": "ok",
+            "timer_id": timer_id,
+            "timer_name": timer_data['name'],
+            "is_running": is_running,
+            "remaining": remaining,
+            "elapsed": elapsed,
+            "end_timestamp": end_timestamp,
+            "server_time": current_time,
+            "current_message": current_message,
+            "field_id": timer_data.get('field_id')
+        })
+    else:
+        # Timer not started yet
+        return jsonify({
+            "status": "ok",
+            "timer_id": timer_id,
+            "timer_name": timer_data['name'],
+            "is_running": False,
+            "remaining": timer_data['duration'],
+            "elapsed": 0,
+            "end_timestamp": None,
+            "server_time": current_time,
+            "current_message": None,
+            "field_id": timer_data.get('field_id')
+        })
 
 @app.errorhandler(404)
 def not_found_error(error):

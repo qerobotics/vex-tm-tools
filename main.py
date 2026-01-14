@@ -2,6 +2,8 @@ import asyncio
 import threading
 import os
 import logging
+import json
+import time
 from multiprocessing import Queue
 
 from modules.tm_manager.api_client import VexTmApiClient
@@ -9,6 +11,8 @@ from modules.tm_manager.connector import VexTmConnector
 from modules.tm_manager.schedule_fetcher import ScheduleFetcher
 from modules.event_processor import EventProcessor
 from modules.match_scheduler import MatchScheduler
+from models.events import Event
+from models.timer import TimerState, Timer
 from server import app, set_event_queue
 
 # Configure logging
@@ -26,6 +30,113 @@ def run_flask(host, port):
     """Function to run Flask app in a separate thread."""
     logger.info(f"Starting Flask server on {host}:{port}")
     app.run(host=host, port=port, debug=False)
+
+class TimerTickWorker:
+    """Background worker that checks active timers and triggers milestones"""
+    
+    def __init__(self, event_queue, storage_path='storage'):
+        self.event_queue = event_queue
+        self.storage_path = storage_path
+        self.timer_state_file = os.path.join(storage_path, 'timer_state.json')
+        self.timers_saved_file = os.path.join(storage_path, 'timers_saved.json')
+        self.triggered_milestones = {}  # Track which milestones have been triggered per timer
+        
+    def _read_json(self, file_path, default=None):
+        """Read JSON file safely"""
+        try:
+            if not os.path.exists(file_path):
+                return default or {}
+            with open(file_path, 'r') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logger.warning(f"Could not read {file_path}: {e}")
+            return default or {}
+    
+    async def check_timers(self):
+        """Check all active timers and trigger milestones"""
+        timer_states = self._read_json(self.timer_state_file, {})
+        timers_saved = self._read_json(self.timers_saved_file, {})
+        
+        current_time = time.time()
+        
+        for timer_id, state_data in list(timer_states.items()):
+            try:
+                state = TimerState.from_dict(state_data)
+                
+                if not state.is_running:
+                    continue
+                
+                # Calculate remaining time
+                remaining = state.end_timestamp - current_time
+                
+                # Check if timer has finished
+                if remaining <= 0 and state.is_running:
+                    logger.info(f"Timer {timer_id} has finished")
+                    event = Event(
+                        type="timer_finished",
+                        field=None,
+                        payload={"timer_id": timer_id}
+                    )
+                    await self.event_queue.put(event)
+                    # Clear triggered milestones for this timer
+                    if timer_id in self.triggered_milestones:
+                        del self.triggered_milestones[timer_id]
+                    continue
+                
+                # Get timer configuration
+                if timer_id not in timers_saved:
+                    logger.warning(f"Timer {timer_id} is running but config not found")
+                    continue
+                
+                timer_config = Timer.from_dict(timers_saved[timer_id])
+                
+                # Check milestones
+                if timer_id not in self.triggered_milestones:
+                    self.triggered_milestones[timer_id] = set()
+                
+                for milestone in timer_config.milestones:
+                    milestone_key = f"{milestone.time_remaining}_{milestone.action_type}"
+                    
+                    # Check if this milestone should trigger
+                    # Trigger when remaining time crosses the threshold (going down)
+                    if (remaining <= milestone.time_remaining and 
+                        milestone_key not in self.triggered_milestones[timer_id]):
+                        
+                        logger.info(f"Timer {timer_id} milestone triggered: {milestone.time_remaining}s - {milestone.action_type}")
+                        
+                        # Enqueue milestone event
+                        event = Event(
+                            type="timer_milestone",
+                            field=None,
+                            payload={
+                                "timer_id": timer_id,
+                                "milestone_time": milestone.time_remaining,
+                                "action_type": milestone.action_type,
+                                "action_payload": milestone.action_payload,
+                                "message": milestone.message
+                            }
+                        )
+                        await self.event_queue.put(event)
+                        
+                        # Mark as triggered
+                        self.triggered_milestones[timer_id].add(milestone_key)
+                
+            except Exception as e:
+                logger.error(f"Error checking timer {timer_id}: {e}", exc_info=True)
+    
+    async def run(self):
+        """Main loop - runs every 50ms"""
+        logger.info("Timer tick worker started")
+        while True:
+            try:
+                await self.check_timers()
+                await asyncio.sleep(0.05)  # 50ms interval
+            except asyncio.CancelledError:
+                logger.info("Timer tick worker cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Error in timer tick worker: {e}", exc_info=True)
+                await asyncio.sleep(1)  # Back off on error
 
 async def main():
     """
@@ -49,8 +160,11 @@ async def main():
     api_key = vex_tm_api_config.get("api_key")
     base_url = vex_tm_api_config.get("base_url", "http://localhost:8080")
     field_set_id = int(vex_tm_api_config.get("field_set_id", os.environ.get("VEX_TM_FIELD_SET_ID", 1)))
+    
+    # Check for DISABLE_VEX_TM environment variable
+    disable_vex_tm = os.environ.get("DISABLE_VEX_TM", "").lower() in ("true", "1", "yes")
 
-    if not all([client_id, client_secret, api_key]):
+    if not disable_vex_tm and not all([client_id, client_secret, api_key]):
         logger.error("Missing required VEX TM API configuration in config.json. Please set client_id, client_secret, and api_key under the 'vex_tm_api' key.")
         return
 
@@ -59,26 +173,35 @@ async def main():
 
     # --- Initialize Components ---
     # API Client
-    api_client = VexTmApiClient(
-        client_id=client_id,
-        client_secret=client_secret,
-        api_key=api_key,
-        base_url=base_url
-    )
+    if not disable_vex_tm:
+        api_client = VexTmApiClient(
+            client_id=client_id,
+            client_secret=client_secret,
+            api_key=api_key,
+            base_url=base_url
+        )
 
-    # Thread 5: Websocket Connector
-    vex_tm_connector = VexTmConnector(
-        event_queue=event_queue,
-        api_client=api_client,
-        base_url=base_url,
-        field_set_id=field_set_id
-    )
+        # Thread 5: Websocket Connector
+        vex_tm_connector = VexTmConnector(
+            event_queue=event_queue,
+            api_client=api_client,
+            base_url=base_url,
+            field_set_id=field_set_id
+        )
 
-    # Thread 3: Schedule Fetcher
-    schedule_fetcher = ScheduleFetcher(api_client)
+        # Thread 3: Schedule Fetcher
+        schedule_fetcher = ScheduleFetcher(api_client)
+    else:
+        logger.info("VEX TM integration disabled via environment variable.")
+        api_client = None
+        vex_tm_connector = None
+        schedule_fetcher = None
 
     # Thread 4: Match Scheduler
     match_scheduler = MatchScheduler(event_queue)
+
+    # Timer tick worker
+    timer_worker = TimerTickWorker(event_queue)
 
     # Thread 1: Flask Frontend
     # The Flask app will run in its own thread so it doesn't block asyncio
@@ -90,18 +213,20 @@ async def main():
         flask_thread.start()
 
         # Create asyncio tasks for our async components
-        connector_task = asyncio.create_task(vex_tm_connector.connect())
-        processor_task = asyncio.create_task(event_processor.process_events())
-        fetcher_task = asyncio.create_task(schedule_fetcher.run())
-        scheduler_task = asyncio.create_task(match_scheduler.run())
+        tasks = []
+        if vex_tm_connector:
+            tasks.append(asyncio.create_task(vex_tm_connector.connect()))
+        tasks.append(asyncio.create_task(event_processor.process_events()))
+        if schedule_fetcher:
+            tasks.append(asyncio.create_task(schedule_fetcher.run()))
+        tasks.append(asyncio.create_task(match_scheduler.run()))
+        tasks.append(asyncio.create_task(timer_worker.run()))
+        
+        # Keep track of tasks for cleanup
+        active_tasks = tasks
 
         # Run forever
-        await asyncio.gather(
-            connector_task, 
-            processor_task,
-            fetcher_task,
-            scheduler_task
-        )
+        await asyncio.gather(*tasks)
 
     except asyncio.CancelledError:
         logger.info("Main task cancelled.")
@@ -109,14 +234,12 @@ async def main():
         logger.error(f"An unexpected error occurred in main: {e}", exc_info=True)
     finally:
         logger.info("Shutting down services.")
-        if 'scheduler_task' in locals() and not scheduler_task.done():
-            scheduler_task.cancel()
-        if 'fetcher_task' in locals() and not fetcher_task.done():
-            fetcher_task.cancel()
-        if 'processor_task' in locals() and not processor_task.done():
-            processor_task.cancel()
-        if 'connector_task' in locals() and not connector_task.done():
-            connector_task.cancel()
+        # Cancel all active tasks
+        if 'active_tasks' in locals():
+            for task in active_tasks:
+                if not task.done():
+                    task.cancel()
+        
         # The Flask thread is a daemon, so it will exit when the main thread does.
 
 if __name__ == "__main__":

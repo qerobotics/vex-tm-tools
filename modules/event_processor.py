@@ -10,6 +10,7 @@ from models.fields import FieldState
 from models.actions import ActionMapping, AudioAction, VideoAction, LightingAction
 from models.config import Config
 from models.audit import AuditEntry
+from models.timer import TimerState
 
 # Import controllers
 from modules.audio.spotify.controller import SpotifyController, _extract_match_number
@@ -30,6 +31,7 @@ class EventProcessor:
         self.scheduled_matches_file = os.path.join(self.storage_path, 'scheduled_matches.json')
         self.popups_file = os.path.join(self.storage_path, 'popups.json')
         self.audit_log_file = os.path.join(self.storage_path, 'events.log')
+        self.timer_state_file = os.path.join(self.storage_path, 'timer_state.json')
         
         self.config = self._load_config()
         self.action_mappings = self._load_action_mappings()
@@ -350,12 +352,153 @@ class EventProcessor:
             await self._atomic_write(self.popups_file, json.dumps(popups, indent=4))
             return True
         
+        if event.type == "timer_started":
+            logger.info(f"Handling timer_started event: {event.payload}")
+            await self._handle_timer_started(event)
+            return True
+        
+        if event.type == "timer_stopped":
+            logger.info(f"Handling timer_stopped event: {event.payload}")
+            await self._handle_timer_stopped(event)
+            return True
+        
+        if event.type == "timer_milestone":
+            logger.info(f"Handling timer_milestone event: {event.payload}")
+            await self._handle_timer_milestone(event)
+            return True
+        
+        if event.type == "timer_finished":
+            logger.info(f"Handling timer_finished event: {event.payload}")
+            await self._handle_timer_finished(event)
+            return True
+        
         if event.type == "manual_action":
             logger.info(f"Handling manual action: {event.payload}")
             await self._execute_action(event.payload)
             return True
             
         return False
+    
+    async def _handle_timer_started(self, event):
+        """Handle timer_started event - update timer state"""
+        timer_id = event.payload.get("timer_id")
+        start_timestamp = event.payload.get("start_timestamp")
+        end_timestamp = event.payload.get("end_timestamp")
+        duration = event.payload.get("duration")
+        
+        if not all([timer_id, start_timestamp, end_timestamp, duration]):
+            logger.error(f"Invalid timer_started payload: {event.payload}")
+            return
+        
+        timer_state = TimerState(
+            timer_id=timer_id,
+            start_timestamp=start_timestamp,
+            end_timestamp=end_timestamp,
+            is_running=True,
+            duration=duration
+        )
+        
+        await self._update_timer_state(timer_id, timer_state)
+        logger.info(f"Timer {timer_id} started, ends at {end_timestamp}")
+    
+    async def _handle_timer_stopped(self, event):
+        """Handle timer_stopped event - mark timer as not running"""
+        timer_id = event.payload.get("timer_id")
+        
+        if not timer_id:
+            logger.error(f"Invalid timer_stopped payload: {event.payload}")
+            return
+        
+        timer_states = await self._read_timer_states()
+        if timer_id in timer_states:
+            timer_state = TimerState.from_dict(timer_states[timer_id])
+            timer_state.is_running = False
+            await self._update_timer_state(timer_id, timer_state)
+            logger.info(f"Timer {timer_id} stopped and state persisted")
+        else:
+            logger.warning(f"Timer {timer_id} not found in timer_states when stopping - it may not have been started")
+    
+    async def _handle_timer_milestone(self, event):
+        """Handle timer_milestone event - execute configured action"""
+        timer_id = event.payload.get("timer_id")
+        milestone_time = event.payload.get("milestone_time")
+        action_type = event.payload.get("action_type")
+        action_payload = event.payload.get("action_payload", {})
+        
+        if not all([timer_id, action_type is not None]):
+            logger.error(f"Invalid timer_milestone payload: {event.payload}")
+            return
+        
+        logger.info(f"Timer {timer_id} milestone at {milestone_time}s: {action_type}")
+        
+        # Execute the action based on type
+        if action_type == "spotify":
+            await self._execute_timer_action("audio", action_payload, event)
+        elif action_type == "lighting":
+            await self._execute_timer_action("lighting", action_payload, event)
+        elif action_type == "atem":
+            await self._execute_timer_action("video", action_payload, event)
+        elif action_type == "message":
+            # Messages are displayed on the frontend, no action needed here
+            logger.info(f"Message milestone: {action_payload.get('text', '')}")
+        elif action_type == "custom":
+            # Custom actions - could trigger manual_action or other events
+            logger.info(f"Custom action: {action_payload}")
+        else:
+            logger.warning(f"Unknown timer action type: {action_type}")
+    
+    async def _handle_timer_finished(self, event):
+        """Handle timer_finished event - mark timer as finished"""
+        timer_id = event.payload.get("timer_id")
+        
+        if not timer_id:
+            logger.error(f"Invalid timer_finished payload: {event.payload}")
+            return
+        
+        timer_states = await self._read_timer_states()
+        if timer_id in timer_states:
+            timer_state = TimerState.from_dict(timer_states[timer_id])
+            timer_state.is_running = False
+            await self._update_timer_state(timer_id, timer_state)
+            logger.info(f"Timer {timer_id} finished")
+    
+    async def _read_timer_states(self):
+        """Read all timer states from storage"""
+        try:
+            lock = self._get_lock(self.timer_state_file)
+            async with lock:
+                if not os.path.exists(self.timer_state_file):
+                    return {}
+                with open(self.timer_state_file, 'r') as f:
+                    return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logger.warning(f"Could not read timer states: {e}")
+            return {}
+    
+    async def _update_timer_state(self, timer_id, timer_state):
+        """Update a specific timer's state in storage"""
+        lock = self._get_lock(self.timer_state_file)
+        async with lock:
+            timer_states = {}
+            if os.path.exists(self.timer_state_file):
+                try:
+                    with open(self.timer_state_file, 'r') as f:
+                        timer_states = json.load(f)
+                except json.JSONDecodeError:
+                    logger.error(f"Could not decode timer_state.json, creating new")
+            
+            timer_states[timer_id] = timer_state.to_dict()
+            
+            # Write directly to avoid deadlock (we already hold the lock)
+            try:
+                await asyncio.to_thread(self._write_atomic_file, self.timer_state_file, json.dumps(timer_states, indent=4))
+                logger.info(f"Successfully wrote to {self.timer_state_file}")
+            except Exception as e:
+                logger.error(f"Failed to atomically write to {self.timer_state_file}: {e}")
+    
+    async def _execute_timer_action(self, action_type, action_data, event):
+        """Execute a timer-triggered action (reuses existing action execution logic)"""
+        await self._execute_action(action_type, action_data, event)
 
     async def _read_popups(self):
         try:
