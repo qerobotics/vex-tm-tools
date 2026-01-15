@@ -635,6 +635,110 @@ def room_page(room_id):
 def api_scheduled_matches():
     return jsonify(_read_json(SCHEDULED_MATCHES_FILE, default={}))
 
+@app.route('/api/match_stats/schedule')
+@login_required(roles=["ANY"])
+def api_match_stats_schedule():
+    """
+    Get full match schedule with team data for match stats page.
+    """
+    try:
+        config_data = _read_json(CONFIG_FILE, default={})
+        config = Config.from_dict(config_data)
+        vex_tm_api = config.vex_tm_api or {}
+        if not vex_tm_api.get('enabled', False):
+            return jsonify({"status": "error", "message": "VEX TM not enabled"}), 503
+        
+        # Read schedule from file
+        schedule_file = os.path.join(STORAGE_PATH, 'schedule.json')
+        schedule_data = _read_json(schedule_file, {})
+        
+        # Get field states to determine current match
+        field_statuses = get_field_statuses()
+        current_match_id = None
+        
+        for field_state in field_statuses:
+            if field_state.match_id:
+                current_match_id = field_state.match_id
+                break
+        
+        return jsonify({
+            "status": "ok",
+            "schedule": schedule_data,
+            "current_match": current_match_id
+        })
+        
+    except Exception as e:
+        logger.error(f"Error fetching match schedule: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/match_stats/rankings/<int:division_id>')
+@login_required(roles=["ANY"])
+def api_match_stats_rankings(division_id):
+    """
+    Get rankings for a specific division.
+    """
+    try:
+        config_data = _read_json(CONFIG_FILE, default={})
+        config = Config.from_dict(config_data)
+        vex_tm_api = config.vex_tm_api or {}
+        if not vex_tm_api.get('enabled', False):
+            return jsonify({"status": "error", "message": "VEX TM not enabled"}), 503
+        
+        api_client = VexTmApiClient(
+            vex_tm_api.get('client_id'),
+            vex_tm_api.get('client_secret'),
+            vex_tm_api.get('api_key'),
+            vex_tm_api.get('base_url', 'http://localhost:8080')
+        )
+        
+        rankings_data = api_client.get(f"/api/rankings/{division_id}/QUAL")
+        
+        if not rankings_data:
+            return jsonify({"status": "error", "message": "Failed to fetch rankings"}), 500
+        
+        return jsonify({
+            "status": "ok",
+            "rankings": rankings_data
+        })
+        
+    except Exception as e:
+        logger.error(f"Error fetching rankings: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/match_stats/teams/<int:division_id>')
+@login_required(roles=["ANY"])
+def api_match_stats_teams(division_id):
+    """
+    Get team details for a specific division.
+    """
+    try:
+        config_data = _read_json(CONFIG_FILE, default={})
+        config = Config.from_dict(config_data)
+        vex_tm_api = config.vex_tm_api or {}
+        if not vex_tm_api.get('enabled', False):
+            return jsonify({"status": "error", "message": "VEX TM not enabled"}), 503
+        
+        api_client = VexTmApiClient(
+            vex_tm_api.get('client_id'),
+            vex_tm_api.get('client_secret'),
+            vex_tm_api.get('api_key'),
+            vex_tm_api.get('base_url', 'http://localhost:8080')
+        )
+        
+        teams_data = api_client.get(f"/api/teams/{division_id}")
+        
+        if not teams_data:
+            return jsonify({"status": "error", "message": "Failed to fetch teams"}), 500
+        
+        return jsonify({
+            "status": "ok",
+            "teams": teams_data
+        })
+        
+    except Exception as e:
+        logger.error(f"Error fetching teams: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route('/api/popups')
 def api_popups():
     return jsonify(_read_json(POPUPS_FILE, default=[]))
@@ -963,6 +1067,12 @@ def timer_admin_expanded(timer_id):
 def match_control():
     """Match control page for sending VEX TM commands"""
     return render_template('match_control.html')
+
+@app.route('/match_stats')
+@login_required(roles=["ANY"])
+def match_stats():
+    """Match statistics page showing match schedule and team info"""
+    return render_template('match_stats.html')
 
 @app.route('/timer/<timer_id>')
 def timer_view(timer_id):

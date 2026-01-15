@@ -430,6 +430,7 @@
                 <a href="{{ url_for('timer_admin') }}">Timer Admin</a>
                 <a href="{{ url_for('match_control') }}">Match Control</a>
               {% endif %}
+              <a href="{{ url_for('match_stats') }}">Match Stats</a>
               {% if session.user.role in ['admin', 'owner'] %}
                 <a href="{{ url_for('event_simulator_page') }}">Event Simulator</a>
               {% endif %}
