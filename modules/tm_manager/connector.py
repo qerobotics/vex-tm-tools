@@ -19,6 +19,25 @@ class VexTmConnector:
         self.api_client = api_client
         self.base_url = base_url
         self.field_set_id = field_set_id
+        self.websocket = None  # Store active websocket connection
+
+    async def send_command(self, command_data):
+        """
+        Send a command through the websocket.
+        command_data should be a dict like {"cmd": "start"} or {"cmd": "queueNextMatch"}
+        """
+        if not self.websocket:
+            logger.warning(f"Cannot send command {command_data}, websocket not connected")
+            return False
+        
+        try:
+            message = json.dumps(command_data)
+            await self.websocket.send(message)
+            logger.info(f"Sent command via websocket: {message}")
+            return True
+        except Exception as e:
+            logger.error(f"Error sending websocket command: {e}")
+            return False
 
     async def connect(self):
         """
@@ -95,6 +114,7 @@ class VexTmConnector:
                 # Connect to websocket with authentication headers
                 async with websockets.connect(ws_url, extra_headers=headers) as websocket:
                     logger.info("Websocket connection established successfully!")
+                    self.websocket = websocket  # Store the websocket connection
                     
                     # Listen for messages from the websocket
                     while True:
@@ -124,6 +144,7 @@ class VexTmConnector:
                 await asyncio.sleep(15)
                 
             except websockets.exceptions.ConnectionClosed as e:
+                self.websocket = None  # Clear websocket reference
                 logger.warning(f"Websocket connection closed (code: {e.code}, reason: {e.reason}). Reconnecting in 5 seconds...")
                 await asyncio.sleep(5)
                 

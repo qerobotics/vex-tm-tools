@@ -1,0 +1,506 @@
+{% extends 'base.html' %}
+
+{% block title %}Match Control{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1><i class="ri-football-line"></i> Match Control</h1>
+    <p>Send commands to VEX Tournament Manager field sets</p>
+</div>
+
+<div style="max-width: 1200px; margin: 0 auto;">
+    <!-- Field Selection -->
+    <div class="card" style="margin-bottom: 1.5rem;">
+        <h2><i class="ri-layout-grid-line"></i> Field Selection</h2>
+        <div class="form-group">
+            <label for="field-select">Select Field:</label>
+            <select id="field-select" class="form-control" onchange="selectField()">
+                <option value="">-- Select a field --</option>
+            </select>
+        </div>
+        <div id="field-info" style="margin-top: 1rem; padding: 1rem; background: var(--bg-2); border-radius: 6px; display: none;">
+            <p><strong>Field ID:</strong> <span id="field-id-display">--</span></p>
+            <p><strong>Status:</strong> <span id="field-status-display">--</span></p>
+        </div>
+    </div>
+
+    <!-- Match Control Commands -->
+    <div class="card" style="margin-bottom: 1.5rem;">
+        <h2><i class="ri-play-circle-line"></i> Match Control</h2>
+        <div class="button-grid">
+            <button class="btn-large btn-success" onclick="sendCommand('start')">
+                <i class="ri-play-line"></i>
+                <span>Start Match</span>
+            </button>
+            <button class="btn-large btn-warning" onclick="sendCommand('endEarly')">
+                <i class="ri-skip-forward-fill"></i>
+                <span>End Early</span>
+            </button>
+            <button class="btn-large btn-danger" onclick="sendCommand('abort')">
+                <i class="ri-close-circle-line"></i>
+                <span>Abort Match</span>
+            </button>
+            <button class="btn-large btn-secondary" onclick="sendCommand('reset')">
+                <i class="ri-restart-line"></i>
+                <span>Reset Timer</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Match Queue Commands -->
+    <div class="card" style="margin-bottom: 1.5rem;">
+        <h2><i class="ri-list-check"></i> Match Queue</h2>
+        <div class="button-grid">
+            <button class="btn-large btn-primary" onclick="sendCommand('queuePrevMatch')">
+                <i class="ri-arrow-left-line"></i>
+                <span>Queue Previous Match</span>
+            </button>
+            <button class="btn-large btn-primary" onclick="sendCommand('queueNextMatch')">
+                <i class="ri-arrow-right-line"></i>
+                <span>Queue Next Match</span>
+            </button>
+            <button class="btn-large btn-primary" onclick="showQueueSkillsDialog()">
+                <i class="ri-trophy-line"></i>
+                <span>Queue Skills</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Audience Display Commands -->
+    <div class="card">
+        <h2><i class="ri-tv-line"></i> Audience Display</h2>
+        <div class="button-grid">
+            <button class="btn-large btn-accent" onclick="sendAudienceDisplay('IN_MATCH')">
+                <i class="ri-football-line"></i>
+                <span>In Match</span>
+            </button>
+            <button class="btn-large btn-accent" onclick="sendAudienceDisplay('RANKINGS')">
+                <i class="ri-bar-chart-line"></i>
+                <span>Rankings</span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Skills Dialog -->
+<div id="skills-dialog" class="modal" style="display: none;">
+    <div class="modal-content">
+        <h2>Queue Skills Match</h2>
+        <div class="form-group">
+            <label for="skills-id">Skills Match ID:</label>
+            <input type="number" id="skills-id" class="form-control" placeholder="Enter skills match ID" min="1">
+        </div>
+        <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
+            <button class="btn-secondary" onclick="closeSkillsDialog()">Cancel</button>
+            <button class="btn-primary" onclick="queueSkillsMatch()">Queue Skills</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.page-header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.page-header h1 {
+    font-size: 2.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.page-header p {
+    color: var(--muted);
+    font-size: 1.1rem;
+}
+
+.card {
+    background: var(--surface);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px;
+    padding: 1.5rem;
+}
+
+.card h2 {
+    margin: 0 0 1rem 0;
+    font-size: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.button-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.btn-large {
+    padding: 1.5rem 1rem;
+    border: 2px solid rgba(255,255,255,0.2);
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    transition: all 0.2s;
+    background: var(--bg-2);
+    color: var(--fg);
+}
+
+.btn-large i {
+    font-size: 2rem;
+    margin: 0;
+}
+
+.btn-large:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.4);
+}
+
+.btn-large:active {
+    transform: translateY(-1px);
+}
+
+.btn-large:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.btn-success {
+    border-color: #4CAF50;
+    background: linear-gradient(135deg, rgba(76, 175, 80, 0.2), rgba(76, 175, 80, 0.1));
+}
+
+.btn-success:hover {
+    border-color: #4CAF50;
+    background: linear-gradient(135deg, rgba(76, 175, 80, 0.3), rgba(76, 175, 80, 0.15));
+}
+
+.btn-danger {
+    border-color: var(--danger);
+    background: linear-gradient(135deg, rgba(247, 118, 142, 0.2), rgba(247, 118, 142, 0.1));
+}
+
+.btn-danger:hover {
+    border-color: var(--danger);
+    background: linear-gradient(135deg, rgba(247, 118, 142, 0.3), rgba(247, 118, 142, 0.15));
+}
+
+.btn-warning {
+    border-color: #ff9800;
+    background: linear-gradient(135deg, rgba(255, 152, 0, 0.2), rgba(255, 152, 0, 0.1));
+}
+
+.btn-warning:hover {
+    border-color: #ff9800;
+    background: linear-gradient(135deg, rgba(255, 152, 0, 0.3), rgba(255, 152, 0, 0.15));
+}
+
+.btn-primary {
+    border-color: var(--primary);
+    background: linear-gradient(135deg, rgba(122, 162, 247, 0.2), rgba(122, 162, 247, 0.1));
+}
+
+.btn-primary:hover {
+    border-color: var(--primary);
+    background: linear-gradient(135deg, rgba(122, 162, 247, 0.3), rgba(122, 162, 247, 0.15));
+}
+
+.btn-accent {
+    border-color: var(--accent);
+    background: linear-gradient(135deg, rgba(42, 195, 222, 0.2), rgba(42, 195, 222, 0.1));
+}
+
+.btn-accent:hover {
+    border-color: var(--accent);
+    background: linear-gradient(135deg, rgba(42, 195, 222, 0.3), rgba(42, 195, 222, 0.15));
+}
+
+.btn-secondary {
+    border-color: var(--secondary);
+    background: linear-gradient(135deg, rgba(157, 124, 216, 0.2), rgba(157, 124, 216, 0.1));
+}
+
+.btn-secondary:hover {
+    border-color: var(--secondary);
+    background: linear-gradient(135deg, rgba(157, 124, 216, 0.3), rgba(157, 124, 216, 0.15));
+}
+
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+}
+
+.form-control {
+    width: 100%;
+    padding: 0.75rem;
+    background: var(--bg-2);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 6px;
+    color: var(--fg);
+    font-size: 1rem;
+    box-sizing: border-box;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+}
+
+.modal-content {
+    background: var(--surface);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 8px;
+    padding: 2rem;
+    max-width: 500px;
+    width: 90%;
+}
+
+.modal-content h2 {
+    margin-top: 0;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(400px);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes slideOut {
+    from {
+        transform: translateX(0);
+        opacity: 1;
+    }
+    to {
+        transform: translateX(400px);
+        opacity: 0;
+    }
+}
+</style>
+
+<script>
+let selectedFieldId = null;
+let fields = [];
+
+async function loadFields() {
+    try {
+        // Load field configuration
+        const response = await fetch('/api/config');
+        const config = await response.json();
+        
+        if (config.fields) {
+            fields = config.fields;
+            const select = document.getElementById('field-select');
+            select.innerHTML = '<option value="">-- Select a field --</option>';
+            
+            fields.forEach(field => {
+                const option = document.createElement('option');
+                option.value = field.id;
+                option.textContent = `${field.name} (ID: ${field.id})`;
+                select.appendChild(option);
+            });
+        }
+    } catch (error) {
+        console.error('Error loading fields:', error);
+        showNotification('Failed to load fields', 'error');
+    }
+}
+
+function selectField() {
+    const select = document.getElementById('field-select');
+    selectedFieldId = select.value;
+    
+    if (selectedFieldId) {
+        const field = fields.find(f => f.id == selectedFieldId);
+        document.getElementById('field-id-display').textContent = field.id;
+        document.getElementById('field-status-display').textContent = field.status || 'Unknown';
+        document.getElementById('field-info').style.display = 'block';
+        
+        // Enable buttons
+        document.querySelectorAll('.btn-large').forEach(btn => {
+            btn.disabled = false;
+        });
+    } else {
+        document.getElementById('field-info').style.display = 'none';
+        
+        // Disable buttons
+        document.querySelectorAll('.btn-large').forEach(btn => {
+            btn.disabled = true;
+        });
+    }
+}
+
+async function sendCommand(command) {
+    if (!selectedFieldId) {
+        showNotification('Please select a field first', 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/tm/send_command', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                field_id: selectedFieldId,
+                command: command
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.status === 'ok') {
+            showNotification(`Command "${command}" sent successfully`, 'success');
+        } else {
+            showNotification(`Failed to send command: ${result.message}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error sending command:', error);
+        showNotification('Failed to send command', 'error');
+    }
+}
+
+async function sendAudienceDisplay(display) {
+    if (!selectedFieldId) {
+        showNotification('Please select a field first', 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/tm/send_command', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                field_id: selectedFieldId,
+                command: 'setAudienceDisplay',
+                params: { display: display }
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.status === 'ok') {
+            showNotification(`Audience display set to "${display}"`, 'success');
+        } else {
+            showNotification(`Failed to set display: ${result.message}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error setting audience display:', error);
+        showNotification('Failed to set audience display', 'error');
+    }
+}
+
+function showQueueSkillsDialog() {
+    if (!selectedFieldId) {
+        showNotification('Please select a field first', 'error');
+        return;
+    }
+    document.getElementById('skills-dialog').style.display = 'flex';
+}
+
+function closeSkillsDialog() {
+    document.getElementById('skills-dialog').style.display = 'none';
+    document.getElementById('skills-id').value = '';
+}
+
+async function queueSkillsMatch() {
+    const skillsId = document.getElementById('skills-id').value;
+    
+    if (!skillsId || skillsId < 1) {
+        showNotification('Please enter a valid skills match ID', 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/tm/send_command', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                field_id: selectedFieldId,
+                command: 'queueSkills',
+                params: { skillsID: parseInt(skillsId) }
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.status === 'ok') {
+            showNotification(`Skills match ${skillsId} queued successfully`, 'success');
+            closeSkillsDialog();
+        } else {
+            showNotification(`Failed to queue skills: ${result.message}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error queuing skills:', error);
+        showNotification('Failed to queue skills match', 'error');
+    }
+}
+
+function showNotification(message, type = 'info') {
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+        position: fixed;
+        top: 100px;
+        right: 20px;
+        padding: 1rem 1.5rem;
+        background: ${type === 'error' ? 'var(--danger)' : type === 'success' ? '#4CAF50' : 'var(--primary)'};
+        color: white;
+        border-radius: 6px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        z-index: 10000;
+        animation: slideIn 0.3s ease;
+    `;
+    notification.textContent = message;
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.style.animation = 'slideOut 0.3s ease';
+        setTimeout(() => notification.remove(), 300);
+    }, 3000);
+}
+
+// Close modal on outside click
+document.addEventListener('click', function(e) {
+    const modal = document.getElementById('skills-dialog');
+    if (e.target === modal) {
+        closeSkillsDialog();
+    }
+});
+
+// Initialize
+document.addEventListener('DOMContentLoaded', function() {
+    loadFields();
+    
+    // Disable all buttons initially
+    document.querySelectorAll('.btn-large').forEach(btn => {
+        btn.disabled = true;
+    });
+});
+</script>
+{% endblock %}

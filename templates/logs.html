@@ -192,7 +192,97 @@
   .checkbox-label input[type="checkbox"] {
     cursor: pointer;
   }
+  
+  /* D1: Search and filter controls */
+  .log-filters {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    background: var(--surface);
+    padding: 1rem 1.5rem;
+    border-radius: 8px;
+    border: 1px solid rgba(122, 162, 247, 0.2);
+  }
+  
+  .search-box {
+    flex: 1;
+    min-width: 250px;
+    position: relative;
+  }
+  
+  .search-box input {
+    width: 100%;
+    padding: 0.5rem 0.75rem 0.5rem 2.5rem;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(122, 162, 247, 0.3);
+    border-radius: 4px;
+    color: var(--fg);
+    font-size: 0.9rem;
+  }
+  
+  .search-box i {
+    position: absolute;
+    left: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+  }
+  
+  .filter-group {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+  
+  .filter-btn {
+    padding: 0.5rem 1rem;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(122, 162, 247, 0.3);
+    border-radius: 4px;
+    color: var(--fg);
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: all 0.2s;
+  }
+  
+  .filter-btn:hover {
+    background: rgba(122, 162, 247, 0.1);
+    border-color: var(--primary);
+  }
+  
+  .filter-btn.active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #0b1226;
+    font-weight: 600;
+  }
+  
+  .stats {
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
 </style>
+
+<!-- D1: Log filtering UI -->
+<div class="log-filters">
+  <div class="search-box">
+    <i class="ri-search-line"></i>
+    <input type="text" id="log-search" placeholder="Search logs..." />
+  </div>
+  <div class="filter-group">
+    <span style="color: var(--muted); font-size: 0.9rem;">Filter:</span>
+    <button class="filter-btn active" data-level="ALL">All</button>
+    <button class="filter-btn" data-level="DEBUG">Debug</button>
+    <button class="filter-btn" data-level="INFO">Info</button>
+    <button class="filter-btn" data-level="WARNING">Warning</button>
+    <button class="filter-btn" data-level="ERROR">Error</button>
+    <button class="filter-btn" data-level="CRITICAL">Critical</button>
+  </div>
+  <div class="stats">
+    <span id="log-stats">0 logs</span>
+  </div>
+</div>
 
 <div class="controls-bar">
   <h2><i class="ri-file-list-3-line"></i> Server Logs</h2>
@@ -215,6 +305,13 @@
     const logContainer = document.getElementById('log-container');
     const autoscrollToggle = document.getElementById('autoscroll-toggle');
     const clearLogsBtn = document.getElementById('clear-logs-btn');
+    const searchInput = document.getElementById('log-search');
+    const filterButtons = document.querySelectorAll('.filter-btn');
+    const statsEl = document.getElementById('log-stats');
+    
+    let allLogs = [];
+    let currentFilter = 'ALL';
+    let currentSearch = '';
     let eventSource;
 
     function connect() {
@@ -239,16 +336,20 @@
             const message = parts.slice(3).join(' - ');
             
             logLineEl.dataset.level = level;
+            logLineEl.dataset.fulltext = line.toLowerCase();
             logLineEl.innerHTML = `
               <span class="log-meta">${timestamp}</span>
               <span class="log-level">${level}</span>
               <span class="log-message">${escapeHtml(message)}</span>
             `;
         } else {
+            logLineEl.dataset.fulltext = line.toLowerCase();
             logLineEl.innerHTML = `<span class="log-message">${escapeHtml(line)}</span>`;
         }
         
+        allLogs.push(logLineEl);
         logContent.appendChild(logLineEl);
+        applyFilters();
 
         if (autoscrollToggle.checked) {
           logContainer.scrollTop = logContainer.scrollHeight;
@@ -273,9 +374,52 @@
       div.textContent = text;
       return div.innerHTML;
     }
+    
+    // D1: Filter and search functionality
+    function applyFilters() {
+      let visibleCount = 0;
+      
+      allLogs.forEach(log => {
+        const level = log.dataset.level || '';
+        const text = log.dataset.fulltext || '';
+        
+        // Apply level filter
+        const levelMatch = currentFilter === 'ALL' || level === currentFilter;
+        
+        // Apply search filter
+        const searchMatch = !currentSearch || text.includes(currentSearch);
+        
+        if (levelMatch && searchMatch) {
+          log.style.display = 'flex';
+          visibleCount++;
+        } else {
+          log.style.display = 'none';
+        }
+      });
+      
+      statsEl.textContent = `${visibleCount} / ${allLogs.length} logs`;
+    }
+    
+    // Search input handler
+    searchInput.addEventListener('input', function(e) {
+      currentSearch = e.target.value.toLowerCase();
+      applyFilters();
+    });
+    
+    // Filter button handlers
+    filterButtons.forEach(btn => {
+      btn.addEventListener('click', function() {
+        filterButtons.forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+        currentFilter = this.dataset.level;
+        applyFilters();
+      });
+    });
 
     clearLogsBtn.addEventListener('click', () => {
       logContent.innerHTML = '';
+      allLogs = [];
+      applyFilters();
     });
 
     connect(); // Initial connection

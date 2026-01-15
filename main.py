@@ -44,6 +44,7 @@ class TimerTickWorker:
         self.timer_state_file = os.path.join(storage_path, 'timer_state.json')
         self.timers_saved_file = os.path.join(storage_path, 'timers_saved.json')
         self.triggered_milestones = {}  # Track which milestones have been triggered per timer
+        self.tm_start_triggered = {}  # Track if auto-start TM has been triggered per timer
         
     def _read_json(self, file_path, default=None):
         """Read JSON file safely"""
@@ -68,6 +69,11 @@ class TimerTickWorker:
                 state = TimerState.from_dict(state_data)
                 
                 if not state.is_running:
+                    # Clear flags for stopped timers
+                    if timer_id in self.triggered_milestones:
+                        del self.triggered_milestones[timer_id]
+                    if timer_id in self.tm_start_triggered:
+                        del self.tm_start_triggered[timer_id]
                     continue
                 
                 # Calculate remaining time
@@ -85,6 +91,9 @@ class TimerTickWorker:
                     # Clear triggered milestones for this timer
                     if timer_id in self.triggered_milestones:
                         del self.triggered_milestones[timer_id]
+                    # Clear auto-start flag
+                    if timer_id in self.tm_start_triggered:
+                        del self.tm_start_triggered[timer_id]
                     continue
                 
                 # Get timer configuration
@@ -93,6 +102,28 @@ class TimerTickWorker:
                     continue
                 
                 timer_config = Timer.from_dict(timers_saved[timer_id])
+                
+                # Auto-start TM countdown at 3 seconds
+                if (timer_config.auto_start_tm and 
+                    timer_config.field_id and 
+                    remaining <= 3 and remaining > 0 and
+                    timer_id not in self.tm_start_triggered):
+                    
+                    logger.info(f"Auto-starting TM countdown for timer {timer_id} at {remaining:.1f}s remaining (field {timer_config.field_id})")
+                    
+                    # Queue TM start command
+                    event = Event(
+                        type="tm_command",
+                        field=timer_config.field_id,
+                        payload={
+                            "command": "start",
+                            "params": {}
+                        }
+                    )
+                    await self.event_queue.put(event)
+                    
+                    # Mark as triggered
+                    self.tm_start_triggered[timer_id] = True
                 
                 # Check milestones
                 if timer_id not in self.triggered_milestones:
@@ -155,12 +186,14 @@ async def main():
     event_queue = asyncio.Queue()
 
     # --- Load Configuration ---
-    # The EventProcessor loads the full config, we'll use that as the source of truth
-    event_processor = EventProcessor(event_queue)
-    config = event_processor.config
-    
-    # Expose spotify controller globally
-    spotify_controller = event_processor.spotify_controller
+    # Load config first to get credentials
+    from models.config import Config
+    config_file = os.path.join('storage', 'config.json')
+    try:
+        with open(config_file, 'r') as f:
+            config = Config.from_json(f.read())
+    except:
+        config = Config()
 
     # Get VEX TM API credentials from the loaded config
     vex_tm_api_config = config.vex_tm_api
@@ -181,6 +214,10 @@ async def main():
     set_event_queue(event_queue, asyncio.get_running_loop())
 
     # --- Initialize Components ---
+    # The EventProcessor will be initialized after we create the connector
+    # so we can pass the connector reference to it
+    vex_tm_connector = None
+    
     # API Client
     if not disable_vex_tm:
         api_client = VexTmApiClient(
@@ -205,6 +242,13 @@ async def main():
         api_client = None
         vex_tm_connector = None
         schedule_fetcher = None
+    
+    # Now create EventProcessor with connector reference (if available)
+    event_processor = EventProcessor(event_queue, tm_connector=vex_tm_connector)
+    config = event_processor.config  # Use the config from event processor as source of truth
+    
+    # Expose spotify controller globally
+    spotify_controller = event_processor.spotify_controller
 
     # Thread 4: Match Scheduler
     match_scheduler = MatchScheduler(event_queue)

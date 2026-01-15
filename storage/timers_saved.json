@@ -1,24 +1,13 @@
 {
-    "f7d1c185-e80e-4f64-928a-13cde3e0a4a6": {
-        "timer_id": "f7d1c185-e80e-4f64-928a-13cde3e0a4a6",
-        "name": "Test",
-        "duration": 120,
-        "milestones": [
-            {
-                "time_remaining": 118,
-                "action_type": "audio",
-                "action_payload": {
-                    "command": "play_track",
-                    "track_uri": "spotify:track:5K2WBsKI02VrJqnw2sdgjc",
-                    "start_time_s": 30
-                },
-                "message": null
-            }
-        ],
+    "64d6e648-63b4-4af7-80b8-269111dda92e": {
+        "timer_id": "64d6e648-63b4-4af7-80b8-269111dda92e",
+        "name": "2",
+        "duration": 15,
+        "milestones": [],
         "field_id": "1",
-        "created_at": "2026-01-15T18:27:08.296540",
+        "created_at": "2026-01-15T21:14:02.440412",
         "ready_states": {},
-        "auto_start_tm": false,
+        "auto_start_tm": true,
         "match_number": null
     }
 }

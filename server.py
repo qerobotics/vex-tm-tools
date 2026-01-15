@@ -105,6 +105,10 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "a_very_insecure_default_secret_key")
 
+# S2: Warn if using default secret key
+if app.secret_key == "a_very_insecure_default_secret_key":
+    logger.warning("⚠️  SECURITY WARNING: Using default Flask secret key! Set FLASK_SECRET_KEY environment variable in production!")
+
 userManager = UserManager()
 
 STORAGE_PATH = 'storage'
@@ -201,7 +205,72 @@ def api_status():
     field_statuses = get_field_statuses()
     return jsonify([status.to_dict() for status in field_statuses])
 
+@app.route('/api/health')
+@login_required(roles=["admin", "owner"])
+def api_health():
+    """
+    D3: System health metrics endpoint (admin only).
+    Returns CPU usage, memory, uptime, event queue size, connection status, etc.
+    """
+    import psutil
+    from main import event_processor
+    
+    # Get process info
+    process = psutil.Process(os.getpid())
+    memory_info = process.memory_info()
+    
+    # Calculate uptime
+    create_time = process.create_time()
+    uptime_seconds = time.time() - create_time
+    
+    # Get event processor stats
+    websocket_events_count = 0
+    if event_processor:
+        websocket_events_count = len(event_processor.websocket_events)
+    
+    # Get field connection status
+    field_statuses = get_field_statuses()
+    connected_fields = sum(1 for fs in field_statuses if fs.websocket_connected)
+    total_fields = len(field_statuses)
+    
+    health_data = {
+        'uptime_seconds': int(uptime_seconds),
+        'uptime_formatted': format_uptime(uptime_seconds),
+        'memory': {
+            'rss_mb': round(memory_info.rss / (1024 * 1024), 2),
+            'vms_mb': round(memory_info.vms / (1024 * 1024), 2),
+            'percent': round(process.memory_percent(), 2)
+        },
+        'cpu_percent': round(process.cpu_percent(interval=0.1), 2),
+        'threads': process.num_threads(),
+        'fields': {
+            'total': total_fields,
+            'connected': connected_fields,
+            'disconnected': total_fields - connected_fields
+        },
+        'events': {
+            'websocket_buffer': websocket_events_count
+        },
+        'timestamp': int(time.time())
+    }
+    
+    return jsonify(health_data)
+
+def format_uptime(seconds):
+    """Format uptime in human-readable format."""
+    days = int(seconds // 86400)
+    hours = int((seconds % 86400) // 3600)
+    minutes = int((seconds % 3600) // 60)
+    
+    if days > 0:
+        return f"{days}d {hours}h {minutes}m"
+    elif hours > 0:
+        return f"{hours}h {minutes}m"
+    else:
+        return f"{minutes}m"
+
 @app.route('/api/websocket_events')
+@login_required()
 def api_websocket_events():
     """
     API endpoint to get recent websocket events from VEX TM.
@@ -212,6 +281,31 @@ def api_websocket_events():
         return jsonify({"status": "ok", "events": events})
     else:
         return jsonify({"status": "error", "message": "Event processor not available"}), 503
+
+@app.route('/api/recent_actions')
+@login_required(roles=["admin", "owner"])
+def api_recent_actions():
+    """
+    D4: Recent actions feed endpoint (admin only).
+    Returns a list of recent timer actions that have been executed.
+    """
+    try:
+        # Read actions from storage/actions.json
+        actions_file = os.path.join(STORAGE_PATH, 'actions.json')
+        actions = _read_json(actions_file, [])
+        
+        # Ensure it's a list
+        if not isinstance(actions, list):
+            actions = []
+        
+        # Return most recent 50 actions
+        recent = actions[-50:] if len(actions) > 50 else actions[:]
+        recent.reverse()  # Most recent first
+        
+        return jsonify({"status": "ok", "actions": recent})
+    except Exception as e:
+        logging.error(f"Error fetching recent actions: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -864,6 +958,12 @@ def timer_admin_expanded(timer_id):
         return render_template('error.html', error_code=404, error_message="Timer not found"), 404
     return render_template('timer_admin_expanded.html', timer_id=timer_id, timer_name=timers[timer_id]['name'])
 
+@app.route('/match_control')
+@login_required(roles=["admin", "av"])
+def match_control():
+    """Match control page for sending VEX TM commands"""
+    return render_template('match_control.html')
+
 @app.route('/timer/<timer_id>')
 def timer_view(timer_id):
     """Public timer viewer page - no authentication required"""
@@ -1412,6 +1512,133 @@ def api_timer_delete_preset(timer_id, preset_index):
         return jsonify({"status": "ok", "presets": presets})
     
     return jsonify({"status": "error", "message": "Invalid preset index"}), 400
+
+# F1: Timer Templates
+@app.route('/api/timer_templates', methods=['GET'])
+@login_required(roles=["admin", "av"])
+def api_timer_templates():
+    """Get all timer templates"""
+    templates_file = os.path.join(STORAGE_PATH, 'timer_templates.json')
+    templates = _read_json(templates_file, [])
+    return jsonify({"status": "ok", "templates": templates})
+
+@app.route('/api/timer_templates', methods=['POST'])
+@login_required(roles=["admin"])
+def api_timer_templates_create():
+    """Create a new timer template from existing timer"""
+    data = request.json
+    timer_id = data.get('timer_id')
+    template_name = data.get('name')
+    
+    if not timer_id or not template_name:
+        return jsonify({"status": "error", "message": "Missing timer_id or name"}), 400
+    
+    # Load the timer
+    timer_file = os.path.join(STORAGE_PATH, f'timers_saved.json')
+    timers = _read_json(timer_file, {})
+    
+    if timer_id not in timers:
+        return jsonify({"status": "error", "message": "Timer not found"}), 404
+    
+    # Create template
+    timer_dict = timers[timer_id]
+    template = {
+        'id': str(uuid.uuid4()),
+        'name': template_name,
+        'description': data.get('description', ''),
+        'duration': timer_dict.get('duration'),
+        'milestones': timer_dict.get('milestones', []),
+        'created_at': int(time.time())
+    }
+    
+    # Save template
+    templates_file = os.path.join(STORAGE_PATH, 'timer_templates.json')
+    templates = _read_json(templates_file, [])
+    templates.append(template)
+    _atomic_write(templates_file, templates)
+    
+    return jsonify({"status": "ok", "template": template})
+
+@app.route('/api/timer_templates/<template_id>', methods=['DELETE'])
+@login_required(roles=["admin"])
+def api_timer_templates_delete(template_id):
+    """Delete a timer template"""
+    templates_file = os.path.join(STORAGE_PATH, 'timer_templates.json')
+    templates = _read_json(templates_file, [])
+    
+    templates = [t for t in templates if t.get('id') != template_id]
+    _atomic_write(templates_file, templates)
+    
+    return jsonify({"status": "ok"})
+
+@app.route('/api/timer_templates/<template_id>/apply/<timer_id>', methods=['POST'])
+@login_required(roles=["admin", "av"])
+def api_timer_templates_apply(template_id, timer_id):
+    """Apply a template to a timer"""
+    templates_file = os.path.join(STORAGE_PATH, 'timer_templates.json')
+    templates = _read_json(templates_file, [])
+    
+    template = next((t for t in templates if t.get('id') == template_id), None)
+    if not template:
+        return jsonify({"status": "error", "message": "Template not found"}), 404
+    
+    # Load timer
+    timer_file = os.path.join(STORAGE_PATH, 'timers_saved.json')
+    timers = _read_json(timer_file, {})
+    
+    if timer_id not in timers:
+        return jsonify({"status": "error", "message": "Timer not found"}), 404
+    
+    # Apply template
+    timers[timer_id]['duration'] = template.get('duration')
+    timers[timer_id]['milestones'] = template.get('milestones', [])
+    
+    _atomic_write(timer_file, timers)
+    
+    return jsonify({"status": "ok", "timer": timers[timer_id]})
+
+# F2: Match History
+@app.route('/api/match_history', methods=['GET'])
+def api_match_history():
+    """Get match history"""
+    history_file = os.path.join(STORAGE_PATH, 'match_history.json')
+    history = _read_json(history_file, [])
+    
+    # Return last 100 matches
+    recent = history[-100:] if len(history) > 100 else history
+    recent.reverse()  # Most recent first
+    
+    return jsonify({"status": "ok", "matches": recent})
+
+@app.route('/api/match_history', methods=['POST'])
+@login_required(roles=["admin", "av"])
+def api_match_history_add():
+    """Add a match to history"""
+    data = request.json
+    
+    match_entry = {
+        'id': str(uuid.uuid4()),
+        'timestamp': int(time.time()),
+        'match_name': data.get('match_name'),
+        'field_id': data.get('field_id'),
+        'red_alliance': data.get('red_alliance', []),
+        'blue_alliance': data.get('blue_alliance', []),
+        'red_score': data.get('red_score'),
+        'blue_score': data.get('blue_score'),
+        'winner': data.get('winner')
+    }
+    
+    history_file = os.path.join(STORAGE_PATH, 'match_history.json')
+    history = _read_json(history_file, [])
+    history.append(match_entry)
+    
+    # Keep last 1000 matches
+    if len(history) > 1000:
+        history = history[-1000:]
+    
+    _atomic_write(history_file, history)
+    
+    return jsonify({"status": "ok", "match": match_entry})
 
 @app.route('/api/spotify/playback', methods=['GET'])
 def api_spotify_playback():

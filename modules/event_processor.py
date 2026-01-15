@@ -22,9 +22,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 class EventProcessor:
-    def __init__(self, event_queue, storage_path='storage'):
+    def __init__(self, event_queue, storage_path='storage', tm_connector=None):
         self.event_queue = event_queue
         self.storage_path = storage_path
+        self.tm_connector = tm_connector  # VexTmConnector instance for sending commands
         self.fields_dir = os.path.join(self.storage_path, 'fields')
         self.actions_file = os.path.join(self.storage_path, 'actions.json')
         self.config_file = os.path.join(self.storage_path, 'config.json')
@@ -616,13 +617,21 @@ class EventProcessor:
             logger.error(f"Invalid tm_command payload: {event.payload}")
             return
         
-        # Check if we have a TM connector instance
-        # This would need to be passed to the event processor or stored globally
-        # For now, we'll log the command - actual implementation would send via websocket
+        # Build command data according to VEX TM API spec
+        command_data = {"cmd": command}
+        command_data.update(params)  # Add any additional parameters
+        
         logger.info(f"TM Command for field {field_id}: {command} with params {params}")
         
-        # TODO: If you have access to the VexTmConnector instance, send the command:
-        # await connector.send_command(field_id, command, params)
+        # Send via websocket if connector is available
+        if self.tm_connector:
+            success = await self.tm_connector.send_command(command_data)
+            if success:
+                logger.info(f"Successfully sent command '{command}' via websocket")
+            else:
+                logger.warning(f"Failed to send command '{command}' via websocket")
+        else:
+            logger.warning(f"TM connector not available, command '{command}' not sent (DISABLE_VEX_TM may be set)")
 
 
 if __name__ == '__main__':

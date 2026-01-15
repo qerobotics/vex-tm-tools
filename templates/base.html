@@ -10,7 +10,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link href="https://cdn.jsdelivr.net/npm/remixicon@4.2.0/fonts/remixicon.css" rel="stylesheet" />
-  <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}" />
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}" />
   <title>{% block title %}{% endblock %} - Vex TM Tools</title>
 
   <!-- Consolidated Tokyo Night Storm CSS (kept here for simplicity and easy editing) -->
@@ -185,6 +185,170 @@
 
   .muted{color:var(--muted);font-size:.95rem}
 
+  /* U2: Toast Notifications */
+  #toast-container {
+    position: fixed;
+    top: 80px;
+    right: 20px;
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 400px;
+  }
+  
+  .toast {
+    background: var(--surface);
+    border: 1px solid rgba(122, 162, 247, 0.3);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    animation: slideIn 0.3s ease-out;
+    min-width: 300px;
+  }
+  
+  @keyframes slideIn {
+    from { transform: translateX(400px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+  
+  .toast.success { border-left: 4px solid #9ece6a; }
+  .toast.error { border-left: 4px solid #f7768e; }
+  .toast.warning { border-left: 4px solid #e0af68; }
+  .toast.info { border-left: 4px solid #7aa2f7; }
+  
+  .toast-icon { font-size: 1.5rem; }
+  .toast.success .toast-icon { color: #9ece6a; }
+  .toast.error .toast-icon { color: #f7768e; }
+  .toast.warning .toast-icon { color: #e0af68; }
+  .toast.info .toast-icon { color: #7aa2f7; }
+  
+  .toast-content { flex: 1; }
+  .toast-title { font-weight: 600; margin-bottom: 0.25rem; color: var(--fg); }
+  .toast-message { font-size: 0.9rem; color: var(--muted); }
+  
+  .toast-close {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 1.25rem;
+    padding: 0;
+    line-height: 1;
+  }
+  
+  .toast-close:hover { color: var(--fg); }
+
+  /* U1: Loading Overlay */
+  #loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(11, 17, 38, 0.9);
+    backdrop-filter: blur(4px);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+  }
+  
+  #loading-overlay.active { display: flex; }
+  
+  .spinner {
+    width: 50px;
+    height: 50px;
+    border: 4px solid rgba(122, 162, 247, 0.2);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* U3: Connection Status Indicator */
+  #connection-status {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background: var(--surface);
+    border: 1px solid rgba(122, 162, 247, 0.3);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    z-index: 1000;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  
+  #connection-status.show { opacity: 1; }
+  
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #9ece6a;
+  }
+  
+  .status-dot.disconnected { background: #f7768e; }
+  .status-dot.connecting { background: #e0af68; animation: pulse 1.5s ease-in-out infinite; }
+  
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* U5: Confirmation Dialog */
+  .modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 9998;
+  }
+  
+  .modal-overlay.active { display: flex; }
+  
+  .confirmation-dialog {
+    background: var(--surface);
+    border: 1px solid rgba(122, 162, 247, 0.3);
+    border-radius: 8px;
+    padding: 2rem;
+    max-width: 500px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  }
+  
+  .confirmation-dialog h3 {
+    margin-top: 0;
+    color: var(--fg);
+  }
+  
+  .confirmation-dialog p {
+    color: var(--muted);
+    margin-bottom: 1.5rem;
+  }
+  
+  .confirmation-buttons {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+  }
+
   /* Card styles */
   .card {
     background: var(--surface);
@@ -264,6 +428,7 @@
               {% if session.user.role in ['admin', 'owner', 'av'] %}
                 <a href="{{ url_for('controls_page') }}">Manual Controls</a>
                 <a href="{{ url_for('timer_admin') }}">Timer Admin</a>
+                <a href="{{ url_for('match_control') }}">Match Control</a>
               {% endif %}
               {% if session.user.role in ['admin', 'owner'] %}
                 <a href="{{ url_for('event_simulator_page') }}">Event Simulator</a>
@@ -304,6 +469,32 @@
       </div>
     </nav>
   </header>
+  
+  <!-- U2: Toast Container -->
+  <div id="toast-container"></div>
+  
+  <!-- U1: Loading Overlay -->
+  <div id="loading-overlay">
+    <div class="spinner"></div>
+  </div>
+  
+  <!-- U3: Connection Status -->
+  <div id="connection-status">
+    <div class="status-dot" id="status-dot"></div>
+    <span id="status-text">Connecting...</span>
+  </div>
+  
+  <!-- U5: Confirmation Dialog -->
+  <div class="modal-overlay" id="confirmation-modal">
+    <div class="confirmation-dialog">
+      <h3 id="confirm-title">Confirm Action</h3>
+      <p id="confirm-message">Are you sure you want to proceed?</p>
+      <div class="confirmation-buttons">
+        <button type="button" class="btn" onclick="window.confirmCancel()">Cancel</button>
+        <button type="button" class="btn btn-primary" id="confirm-button">Confirm</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Main content block: child templates should populate this -->
   <main>
@@ -311,7 +502,153 @@
   </main>
 
   <script>
+    // ===== Global UI Utilities =====
+    
+    // U2: Toast Notification System
+    window.showToast = function(message, type = 'info', title = '', duration = 4000) {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      
+      const icons = {
+        success: '✓',
+        error: '✕',
+        warning: '⚠',
+        info: 'ℹ'
+      };
+      
+      const titles = {
+        success: title || 'Success',
+        error: title || 'Error',
+        warning: title || 'Warning',
+        info: title || 'Info'
+      };
+      
+      toast.innerHTML = `
+        <div class="toast-icon">${icons[type]}</div>
+        <div class="toast-content">
+          <div class="toast-title">${titles[type]}</div>
+          <div class="toast-message">${message}</div>
+        </div>
+        <button class="toast-close" onclick="this.parentElement.remove()">×</button>
+      `;
+      
+      container.appendChild(toast);
+      
+      setTimeout(() => {
+        toast.style.animation = 'slideIn 0.3s ease-out reverse';
+        setTimeout(() => toast.remove(), 300);
+      }, duration);
+    };
+    
+    // U1: Loading Overlay
+    window.showLoading = function() {
+      document.getElementById('loading-overlay').classList.add('active');
+    };
+    
+    window.hideLoading = function() {
+      document.getElementById('loading-overlay').classList.remove('active');
+    };
+    
+    // U3: Connection Status
+    let connectionCheckInterval = null;
+    
+    function updateConnectionStatus(status, text) {
+      const indicator = document.getElementById('connection-status');
+      const dot = document.getElementById('status-dot');
+      const statusText = document.getElementById('status-text');
+      
+      dot.className = `status-dot ${status}`;
+      statusText.textContent = text;
+      
+      // Show briefly when disconnected/connecting
+      if (status !== 'connected') {
+        indicator.classList.add('show');
+      } else {
+        setTimeout(() => indicator.classList.remove('show'), 2000);
+      }
+    }
+    
+    function checkConnection() {
+      fetch('/api/config', { method: 'HEAD' })
+        .then(() => {
+          updateConnectionStatus('connected', 'Connected');
+        })
+        .catch(() => {
+          updateConnectionStatus('disconnected', 'Disconnected');
+        });
+    }
+    
+    // U5: Confirmation Dialog
+    window.confirmAction = function(message, title = 'Confirm Action') {
+      return new Promise((resolve) => {
+        const modal = document.getElementById('confirmation-modal');
+        const titleEl = document.getElementById('confirm-title');
+        const messageEl = document.getElementById('confirm-message');
+        const button = document.getElementById('confirm-button');
+        
+        titleEl.textContent = title;
+        messageEl.textContent = message;
+        modal.classList.add('active');
+        
+        const cleanup = () => {
+          modal.classList.remove('active');
+          button.onclick = null;
+        };
+        
+        button.onclick = () => {
+          cleanup();
+          resolve(true);
+        };
+        
+        window.confirmCancel = () => {
+          cleanup();
+          resolve(false);
+        };
+      });
+    };
+    
+    // U4: Keyboard Shortcuts
+    document.addEventListener('keydown', function(e) {
+      // Ctrl/Cmd + L: Go to logs
+      if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
+        e.preventDefault();
+        {% if 'user' in session and session.user.role in ['admin', 'owner'] %}
+        window.location.href = "{{ url_for('logs_page') }}";
+        {% endif %}
+      }
+      
+      // Ctrl/Cmd + H: Go to home
+      if ((e.ctrlKey || e.metaKey) && e.key === 'h') {
+        e.preventDefault();
+        window.location.href = "{{ url_for('index') }}";
+      }
+      
+      // Ctrl/Cmd + K: Go to controls
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        {% if 'user' in session and session.user.role in ['admin', 'owner', 'av'] %}
+        window.location.href = "{{ url_for('controls_page') }}";
+        {% endif %}
+      }
+      
+      // Ctrl/Cmd + T: Go to timer admin
+      if ((e.ctrlKey || e.metaKey) && e.key === 't') {
+        e.preventDefault();
+        {% if 'user' in session and session.user.role in ['admin', 'owner', 'av'] %}
+        window.location.href = "{{ url_for('timer_admin') }}";
+        {% endif %}
+      }
+    });
+    
+    // Initialize on page load
     document.addEventListener('DOMContentLoaded', function() {
+        // Check connection initially
+        checkConnection();
+        // Then check every 10 seconds
+        connectionCheckInterval = setInterval(checkConnection, 10000);
+        
+        // Fetch rooms for dropdown
         fetch('/api/config')
             .then(response => response.json())
             .then(data => {
@@ -334,7 +671,10 @@
                     roomContainer.appendChild(noRooms);
                 }
             })
-            .catch(error => console.error('Error fetching rooms for navbar:', error));
+            .catch(error => {
+                console.error('Error fetching rooms for navbar:', error);
+                updateConnectionStatus('disconnected', 'Failed to load');
+            });
     });
   </script>
 </body>

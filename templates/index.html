@@ -9,7 +9,7 @@
     <h1 id="dashboard-heading"><i class="ri-dashboard-line"></i> Live Event Dashboard</h1>
     <p class="muted">Real-time status and data from the VEX Tournament Manager</p>
     
-    <div class="dashboard-grid">
+    <div class="dashboard-grid" {% if 'user' not in session %}style="grid-template-columns: 1fr 1fr; grid-template-rows: 1fr;"{% endif %}>
         <!-- Field Status -->
         <div class="dashboard-card">
             <h2><i class="ri-map-pin-line"></i> Field Status</h2>
@@ -18,7 +18,8 @@
             </div>
         </div>
 
-        <!-- WebSocket Updates -->
+        {% if 'user' in session %}
+        <!-- WebSocket Updates (Auth Required) -->
         <div class="dashboard-card">
             <h2><i class="ri-radio-line"></i> WebSocket Activity</h2>
             <div id="websocket-status" class="status-indicator">
@@ -29,6 +30,7 @@
                 <p class="muted">No events received yet</p>
             </div>
         </div>
+        {% endif %}
 
         <!-- Match Schedule -->
         <div class="dashboard-card">
@@ -52,6 +54,24 @@
                 <p class="muted">Loading teams...</p>
             </div>
         </div>
+
+        {% if 'user' in session and session.user.role in ['admin', 'owner'] %}
+        <!-- D3: System Health Metrics (Admin Only) -->
+        <div class="dashboard-card">
+            <h2><i class="ri-heart-pulse-line"></i> System Health</h2>
+            <div id="health-container" class="health-metrics">
+                <p class="muted">Loading health data...</p>
+            </div>
+        </div>
+
+        <!-- D4: Recent Actions Feed (Admin Only) -->
+        <div class="dashboard-card">
+            <h2><i class="ri-history-line"></i> Recent Actions</h2>
+            <div id="actions-container" class="actions-feed">
+                <p class="muted">Loading actions...</p>
+            </div>
+        </div>
+        {% endif %}
     </div>
 </section>
 
@@ -74,7 +94,7 @@ body.full-width-dashboard-page section {
 
 .dashboard-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 1fr 1fr;
     grid-template-rows: 1fr 1fr;
     gap: 1.5rem;
     margin-top: 1.5rem;
@@ -327,6 +347,77 @@ body.full-width-dashboard-page section {
     color: var(--muted);
     font-size: 0.8rem;
 }
+
+/* D3: Health Metrics */
+.health-metrics {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.health-metric {
+    background: var(--bg-2);
+    border-radius: 4px;
+    padding: 1rem;
+    border-left: 3px solid var(--primary);
+}
+
+.health-metric-label {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-bottom: 0.5rem;
+}
+
+.health-metric-value {
+    color: var(--fg);
+    font-size: 1.5rem;
+    font-weight: 700;
+}
+
+.health-metric-small {
+    font-size: 0.9rem;
+    color: var(--muted);
+    margin-top: 0.25rem;
+}
+
+/* D4: Actions Feed */
+.actions-feed {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.action-item {
+    background: var(--bg-2);
+    border-radius: 4px;
+    padding: 0.75rem;
+    border-left: 3px solid var(--primary);
+}
+
+.action-time {
+    color: var(--muted);
+    font-size: 0.75rem;
+    margin-bottom: 0.25rem;
+}
+
+.action-text {
+    color: var(--fg);
+    font-size: 0.9rem;
+}
+
+.action-type {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 3px;
+    background: rgba(122, 162, 247, 0.2);
+    color: var(--primary);
+    font-size: 0.75rem;
+    margin-right: 0.5rem;
+}
 </style>
 
 <script>
@@ -538,6 +629,9 @@ async function fetchTeams() {
 function switchTab(tab) {
     currentTab = tab;
     
+    // D5: Save tab state to localStorage
+    localStorage.setItem('dashboard_tab', tab);
+    
     // Update buttons
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
     event.target.classList.add('active');
@@ -568,18 +662,130 @@ function formatMatchName(match) {
     return `${prefix}${match.match || ''}`;
 }
 
+// D3: Fetch and display health metrics
+async function fetchHealth() {
+    try {
+        const response = await fetch('/api/health');
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        const data = await response.json();
+        
+        const container = document.getElementById('health-container');
+        container.innerHTML = `
+            <div class="health-metric">
+                <div class="health-metric-label">Uptime</div>
+                <div class="health-metric-value">${data.uptime_formatted}</div>
+            </div>
+            <div class="health-metric">
+                <div class="health-metric-label">Memory Usage</div>
+                <div class="health-metric-value">${data.memory.rss_mb} MB</div>
+                <div class="health-metric-small">${data.memory.percent}% of system</div>
+            </div>
+            <div class="health-metric">
+                <div class="health-metric-label">CPU Usage</div>
+                <div class="health-metric-value">${data.cpu_percent}%</div>
+            </div>
+            <div class="health-metric">
+                <div class="health-metric-label">Field Connections</div>
+                <div class="health-metric-value">${data.fields.connected}/${data.fields.total}</div>
+                <div class="health-metric-small">${data.fields.disconnected} disconnected</div>
+            </div>
+            <div class="health-metric">
+                <div class="health-metric-label">WebSocket Events</div>
+                <div class="health-metric-value">${data.events.websocket_buffer}</div>
+                <div class="health-metric-small">in buffer</div>
+            </div>
+        `;
+    } catch (error) {
+        console.error('Error fetching health:', error);
+        const container = document.getElementById('health-container');
+        container.innerHTML = `<p class="muted">Error loading health data</p>`;
+    }
+}
+
+// D4: Fetch and display recent actions
+async function fetchRecentActions() {
+    try {
+        const response = await fetch('/api/recent_actions');
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        const data = await response.json();
+        
+        const container = document.getElementById('actions-container');
+        
+        if (data.actions && data.actions.length > 0) {
+            container.innerHTML = data.actions.slice(0, 20).map(action => {
+                const time = new Date(action.timestamp * 1000).toLocaleTimeString();
+                const type = action.action_type || 'unknown';
+                const description = action.description || 'No description';
+                
+                return `
+                    <div class="action-item">
+                        <div class="action-time">${time}</div>
+                        <div class="action-text">
+                            <span class="action-type">${type}</span>
+                            ${escapeHtml(description)}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        } else {
+            container.innerHTML = `<p class="muted">No actions recorded yet</p>`;
+        }
+    } catch (error) {
+        console.error('Error fetching actions:', error);
+        const container = document.getElementById('actions-container');
+        container.innerHTML = `<p class="muted">Error loading actions</p>`;
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 // Initialize and update
 document.addEventListener('DOMContentLoaded', function() {
+    // D5: Restore last selected tab
+    const savedTab = localStorage.getItem('dashboard_tab');
+    if (savedTab && ['rankings', 'teams'].includes(savedTab)) {
+        currentTab = savedTab;
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            if (btn.textContent.toLowerCase() === savedTab) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
+        document.querySelectorAll('.tab-content').forEach(content => {
+            if (content.id === `${savedTab}-container`) {
+                content.classList.add('active');
+            } else {
+                content.classList.remove('active');
+            }
+        });
+    }
+    
     fetchFieldStatus();
     fetchSchedule();
     fetchRankings();
-    fetchWebSocketEvents();
     
-    // Poll for updates
+    // Only fetch authenticated data if logged in
+    {% if 'user' in session %}
+    fetchWebSocketEvents();
+    setInterval(fetchWebSocketEvents, 1000); // Update websocket events frequently
+    {% endif %}
+    
+    {% if 'user' in session and session.user.role in ['admin', 'owner'] %}
+    fetchHealth();
+    fetchRecentActions();
+    setInterval(fetchHealth, 5000); // Update health every 5 seconds
+    setInterval(fetchRecentActions, 3000); // Update actions every 3 seconds
+    {% endif %}
+    
+    // Poll for updates (public data)
     setInterval(fetchFieldStatus, 2000);
     setInterval(fetchSchedule, 10000);
     setInterval(fetchRankings, 30000);
-    setInterval(fetchWebSocketEvents, 1000); // Update websocket events frequently
 });
 </script>
 {% endblock %}

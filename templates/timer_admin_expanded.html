@@ -74,6 +74,14 @@
                     <i class="ri-restart-line"></i> Reset
                 </button>
             </div>
+            <div class="timer-actions" style="margin-top: 0.5rem;">
+                <button class="control-btn abort" onclick="sendTMCommand('abort')">
+                    <i class="ri-close-circle-line"></i> Abort
+                </button>
+                <button class="control-btn end-early" onclick="sendTMCommand('endEarly')">
+                    <i class="ri-skip-forward-fill"></i> End Early
+                </button>
+            </div>
         </div>
         
         <!-- Options -->
@@ -412,6 +420,16 @@ body.fullscreen-timer-admin header {
     color: var(--fg);
 }
 
+.control-btn.abort {
+    background: linear-gradient(135deg, #ff9800, #f57c00);
+    color: white;
+}
+
+.control-btn.end-early {
+    background: linear-gradient(135deg, #9c27b0, #7b1fa2);
+    color: white;
+}
+
 .control-btn:hover {
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0,0,0,0.3);
@@ -587,10 +605,8 @@ function updateTimerDisplay() {
     display.textContent = formatTime(remaining);
     
     display.classList.remove('warning', 'danger');
-    if (remaining <= 3 && remaining > 0 && currentTimer?.auto_start_tm) {
-        // Trigger TM start
-        sendTMCommand('start');
-    }
+    
+    // Color coding based on remaining time (auto-start is now handled server-side)
     if (remaining <= 10 && remaining > 0) {
         display.classList.add('danger');
     } else if (remaining <= 30 && remaining > 0) {
@@ -771,10 +787,18 @@ async function updateAutoStartTM() {
 }
 
 async function sendTMCommand(command) {
-    if (!currentTimer?.field_id) return;
+    console.log('sendTMCommand called with command:', command);
+    console.log('currentTimer:', currentTimer);
+    console.log('currentTimer.field_id:', currentTimer?.field_id);
+    
+    if (!currentTimer?.field_id) {
+        console.warn('Cannot send TM command: field_id not set in currentTimer');
+        return;
+    }
     
     try {
-        await fetch('/api/tm/send_command', {
+        console.log('Sending TM command to field', currentTimer.field_id, ':', command);
+        const response = await fetch('/api/tm/send_command', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -782,6 +806,8 @@ async function sendTMCommand(command) {
                 command: command
             })
         });
+        const result = await response.json();
+        console.log('TM command response:', result);
     } catch (error) {
         console.error('Error sending TM command:', error);
     }
