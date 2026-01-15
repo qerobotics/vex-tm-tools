@@ -6,61 +6,62 @@
 
 {% block content %}
 <div class="timer-page">
-    <div class="timer-display-container">
-        <div id="timer-name" class="timer-name">Loading...</div>
-        <div id="timer-display" class="timer-display">--:--</div>
-        <div id="timer-message" class="timer-message"></div>
-        <div id="display-message" class="display-message"></div>
-        
-        <div class="ready-button-container">
-            <button id="ready-button" class="ready-button" onclick="markReady()">
-                <i class="ri-checkbox-circle-line"></i> I'm Ready!
-            </button>
-        </div>
-        
-        <div id="team-info" class="team-info" style="display: none;">
-            <h3>Match Teams</h3>
-            <div id="teams-grid"></div>
-        </div>
-        
-        <div id="field-info" class="field-info" style="display: none;">
-            <h3>Upcoming Matches</h3>
-            <div id="matches-list"></div>
-        </div>
-        
-        <div id="spotify-controls" class="spotify-controls" style="display: none;">
-            <div class="spotify-header">
-                <h3><i class="ri-spotify-fill"></i> Now Playing</h3>
+    <div class="timer-container">
+        <!-- Left Panel: Timer Display -->
+        <div class="timer-panel">
+            <div id="timer-name" class="timer-name">Loading...</div>
+            <div id="timer-display" class="timer-display">--:--</div>
+            <div id="timer-message" class="timer-message"></div>
+            <div id="display-message" class="display-message"></div>
+            
+            <div class="ready-button-container">
+                <button id="ready-button" class="ready-button" onclick="markReady()">
+                    <i class="ri-checkbox-circle-line"></i> I'm Ready!
+                </button>
             </div>
-            <div id="spotify-content">
-                <div class="spotify-track-info">
-                    <img id="spotify-album-art" src="" alt="Album Art" style="display: none;">
-                    <div class="spotify-details">
-                        <div id="spotify-track-name" class="spotify-track-name">-</div>
-                        <div id="spotify-artist-name" class="spotify-artist-name">-</div>
+            
+            <div id="spotify-controls" class="spotify-controls" style="display: none;">
+                <div class="spotify-header">
+                    <h3><i class="ri-spotify-fill"></i> Now Playing</h3>
+                </div>
+                <div id="spotify-content">
+                    <div class="spotify-track-info">
+                        <img id="spotify-album-art" src="" alt="Album Art" style="display: none;">
+                        <div class="spotify-details">
+                            <div id="spotify-track-name" class="spotify-track-name">-</div>
+                            <div id="spotify-artist-name" class="spotify-artist-name">-</div>
+                        </div>
+                    </div>
+                    <div class="spotify-progress">
+                        <span id="spotify-current-time">0:00</span>
+                        <div class="progress-bar">
+                            <div id="spotify-progress-fill" class="progress-fill"></div>
+                        </div>
+                        <span id="spotify-duration">0:00</span>
+                    </div>
+                    <div class="spotify-buttons">
+                        <button onclick="spotifyControl('previous')" class="spotify-btn" title="Previous">
+                            <i class="ri-skip-back-fill"></i>
+                        </button>
+                        <button id="spotify-play-pause" onclick="spotifyTogglePlayPause()" class="spotify-btn spotify-btn-primary" title="Play/Pause">
+                            <i class="ri-play-fill"></i>
+                        </button>
+                        <button onclick="spotifyControl('next')" class="spotify-btn" title="Next">
+                            <i class="ri-skip-forward-fill"></i>
+                        </button>
                     </div>
                 </div>
-                <div class="spotify-progress">
-                    <span id="spotify-current-time">0:00</span>
-                    <div class="progress-bar">
-                        <div id="spotify-progress-fill" class="progress-fill"></div>
-                    </div>
-                    <span id="spotify-duration">0:00</span>
-                </div>
-                <div class="spotify-buttons">
-                    <button onclick="spotifyControl('previous')" class="spotify-btn" title="Previous">
-                        <i class="ri-skip-back-fill"></i>
-                    </button>
-                    <button id="spotify-play-pause" onclick="spotifyTogglePlayPause()" class="spotify-btn spotify-btn-primary" title="Play/Pause">
-                        <i class="ri-play-fill"></i>
-                    </button>
-                    <button onclick="spotifyControl('next')" class="spotify-btn" title="Next">
-                        <i class="ri-skip-forward-fill"></i>
-                    </button>
+                <div id="spotify-error" class="spotify-error" style="display: none;">
+                    Spotify not available
                 </div>
             </div>
-            <div id="spotify-error" class="spotify-error" style="display: none;">
-                Spotify not available
+        </div>
+
+        <!-- Right Panel: Current Match Teams -->
+        <div class="team-panel">
+            <div id="field-info" class="field-info-panel">
+                <div id="current-match-banner" class="current-match-banner-timer"></div>
+                <div id="match-teams-container" class="match-teams-container"></div>
             </div>
         </div>
     </div>
@@ -85,16 +86,32 @@ body.full-width-timer-page header {
 .timer-page {
     height: 100vh;
     display: flex;
-    align-items: center;
-    justify-content: center;
+    align-items: stretch;
     background: linear-gradient(135deg, var(--bg) 0%, var(--bg-2) 50%, var(--surface) 100%);
-    padding: 80px 2rem 2rem 2rem;
+    padding: 80px 0 0 0;
 }
 
-.timer-display-container {
-    text-align: center;
-    max-width: 1400px;
-    width: 100%;
+.timer-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+    max-width: 95%;
+    width: 95%;
+    margin: 0 auto;
+    height: calc(100vh - 80px);
+    padding: 2rem;
+}
+
+/* Left Panel - Timer Display */
+.timer-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    background: rgba(17, 24, 39, 0.3);
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.06);
 }
 
 .timer-name {
@@ -204,6 +221,92 @@ body.full-width-timer-page header {
     50% { opacity: 0.8; transform: scale(0.98); }
 }
 
+/* Right Panel - Team Info */
+.team-panel {
+    display: flex;
+    flex-direction: column;
+    padding: 2rem;
+    background: rgba(17, 24, 39, 0.3);
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.06);
+    overflow: hidden;
+}
+
+.field-info-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.current-match-banner-timer {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+    border-radius: 12px;
+    padding: 1.5rem;
+    text-align: center;
+    color: white;
+    font-size: 2rem;
+    font-weight: 700;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.match-teams-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    flex: 1;
+}
+
+.match-team-card-timer {
+    border-radius: 12px;
+    padding: 1.5rem;
+    color: white;
+    background: linear-gradient(135deg, #1e90ff 0%, #00bfff 100%);
+    overflow-y: auto;
+}
+
+.match-team-card-timer.red {
+    background: linear-gradient(135deg, #ff4757 0%, #ff6348 100%);
+}
+
+.match-team-card-timer h4 {
+    margin: 0 0 1rem 0;
+    font-size: 1.2rem;
+}
+
+.match-team-item {
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid rgba(255,255,255,0.2);
+}
+
+.match-team-item:last-child {
+    border-bottom: none;
+}
+
+.match-team-number {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 0.25rem;
+}
+
+.match-team-name {
+    font-size: 0.95rem;
+    margin-bottom: 0.5rem;
+}
+
+.match-team-stats {
+    font-size: 0.85rem;
+    opacity: 0.9;
+}
+
+.match-team-stat-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.25rem;
+}
+
 .team-info {
     margin-top: 3rem;
     background: rgba(17, 24, 39, 0.6);
@@ -297,45 +400,70 @@ body.full-width-timer-page header {
     font-size: 1.5rem;
 }
 
-#matches-list {
-    display: grid;
-    gap: 1rem;
+.current-match-banner-timer {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+    border-radius: 12px;
+    padding: 1.5rem;
+    text-align: center;
+    margin-bottom: 2rem;
+    color: white;
+    font-size: 2rem;
+    font-weight: 700;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.2);
 }
 
-.match-item {
-    background: rgba(11, 17, 38, 0.8);
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 6px;
-    padding: 1rem 1.5rem;
+.match-teams-container {
     display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: 1.5rem;
-    align-items: center;
-    text-align: left;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
 }
 
-.match-number {
+.match-team-card-timer {
+    border-radius: 12px;
+    padding: 1.5rem;
+    color: white;
+    background: linear-gradient(135deg, #1e90ff 0%, #00bfff 100%);
+}
+
+.match-team-card-timer.red {
+    background: linear-gradient(135deg, #ff4757 0%, #ff6348 100%);
+}
+
+.match-team-card-timer h4 {
+    margin: 0 0 1rem 0;
+    font-size: 1.2rem;
+}
+
+.match-team-item {
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid rgba(255,255,255,0.2);
+}
+
+.match-team-item:last-child {
+    border-bottom: none;
+}
+
+.match-team-number {
     font-size: 1.5rem;
     font-weight: 700;
-    color: var(--primary);
-    min-width: 60px;
+    margin-bottom: 0.25rem;
 }
 
-.match-teams {
+.match-team-name {
+    font-size: 0.95rem;
+    margin-bottom: 0.5rem;
+}
+
+.match-team-stats {
+    font-size: 0.85rem;
+    opacity: 0.9;
+}
+
+.match-team-stat-row {
     display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-}
-
-.team {
-    color: var(--fg);
-    font-size: 1.1rem;
-}
-
-.match-time {
-    color: var(--muted);
-    font-size: 0.9rem;
-    white-space: nowrap;
+    justify-content: space-between;
+    margin-bottom: 0.25rem;
 }
 
 /* Spotify Controls */
@@ -642,11 +770,22 @@ function updateDisplay() {
         return;
     }
     
-    const remaining = currentEndTimestamp - now;
+    const remaining = Math.floor(currentEndTimestamp - now);
     const display = document.getElementById('timer-display');
     
     // Update display
     display.textContent = formatTime(remaining);
+    
+    // Stop timer when it reaches 00:00
+    if (remaining <= 0) {
+        isRunning = false;
+        if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId);
+            animationFrameId = null;
+        }
+        display.classList.remove('warning', 'danger', 'overtime');
+        return;
+    }
     
     // Update styling based on time
     display.classList.remove('warning', 'danger', 'overtime');
@@ -740,7 +879,7 @@ async function syncTimerState() {
             displayMessageEl.textContent = '';
         }
         
-        // Update field info
+        // Update current match team info
         if (data.field_id) {
             await updateFieldMatches(data.field_id);
         }
@@ -752,41 +891,156 @@ async function syncTimerState() {
 
 async function updateFieldMatches(fieldId) {
     try {
-        const response = await fetch('/api/scheduled_matches');
-        const data = await response.json();
+        // Fetch current match from schedule endpoint
+        const scheduleResponse = await fetch('/api/match_stats/schedule');
+        const scheduleData = await scheduleResponse.json();
         
-        const fieldInfo = document.getElementById('field-info');
-        const matchesList = document.getElementById('matches-list');
+        if (scheduleData.status !== 'ok' || !scheduleData.current_match) {
+            document.getElementById('field-info').style.display = 'none';
+            return;
+        }
         
-        // Filter matches for this field
-        const fieldMatches = data.filter(match => match.field === fieldId).slice(0, 5);
+        const currentMatch = scheduleData.current_match;
+        const schedule = scheduleData.schedule;
         
-        if (fieldMatches.length > 0) {
-            fieldInfo.style.display = 'block';
-            matchesList.innerHTML = fieldMatches.map(match => {
-                const matchName = formatMatchName(match.match);
-                const time = new Date(match.startTime).toLocaleTimeString('en-US', {
-                    hour: '2-digit',
-                    minute: '2-digit'
-                });
-                
+        // Find the full match object in the schedule
+        let fullMatchObj = null;
+        if (schedule && schedule.divisions) {
+            for (const division of schedule.divisions) {
+                for (const match of division.matches || []) {
+                    const mt = match.matchInfo?.matchTuple;
+                    if (mt && 
+                        mt.division === currentMatch.division &&
+                        mt.round === currentMatch.round &&
+                        mt.match === currentMatch.match) {
+                        fullMatchObj = { match, division };
+                        break;
+                    }
+                }
+                if (fullMatchObj) break;
+            }
+        }
+        
+        if (!fullMatchObj) {
+            document.getElementById('field-info').style.display = 'none';
+            return;
+        }
+        
+        // Fetch teams data for this division
+        const teamsResponse = await fetch(`/api/match_stats/teams/${fullMatchObj.division.id}`);
+        const teamsData = await teamsResponse.json();
+        
+        // Fetch rankings data for this division
+        const rankingsResponse = await fetch(`/api/match_stats/rankings/${fullMatchObj.division.id}`);
+        const rankingsData = await rankingsResponse.json();
+        
+        const match = fullMatchObj.match;
+        const alliances = match.matchInfo?.alliances || [];
+        const matchTuple = match.matchInfo?.matchTuple;
+        
+        const matchName = `${matchTuple?.round || 'QUAL'} Match #${matchTuple?.match || '?'}`;
+        
+        // Update banner
+        const banner = document.getElementById('current-match-banner');
+        banner.textContent = matchName;
+        
+        // Build team cards
+        const container = document.getElementById('match-teams-container');
+        container.innerHTML = '';
+        
+        const blueAlliance = alliances[0] || { teams: [] };
+        const redAlliance = alliances[1] || { teams: [] };
+        
+        const divTeams = {};
+        if (teamsData.status === 'ok' && teamsData.teams?.teams) {
+            for (const team of teamsData.teams.teams) {
+                divTeams[team.number] = team;
+            }
+        }
+        
+        const divRankings = {};
+        if (rankingsData.status === 'ok' && rankingsData.rankings?.rankings) {
+            for (const ranking of rankingsData.rankings.rankings) {
+                const teams = ranking.alliance?.teams || [];
+                for (const team of teams) {
+                    divRankings[team.number] = ranking;
+                }
+            }
+        }
+        
+        // Blue alliance card
+        const blueCard = document.createElement('div');
+        blueCard.className = 'match-team-card-timer blue';
+        blueCard.innerHTML = `
+            <h4><i class="ri-team-line"></i> Blue Alliance</h4>
+            ${blueAlliance.teams.map(t => {
+                const team = divTeams[t.number] || {};
+                const ranking = divRankings[t.number] || {};
                 return `
-                    <div class="match-item">
-                        <div class="match-number">${matchName}</div>
-                        <div class="match-teams">
-                            <div class="team">${match.teams.red.join(', ')}</div>
-                            <div class="team">${match.teams.blue.join(', ')}</div>
+                    <div class="match-team-item">
+                        <div class="match-team-number">${t.number}</div>
+                        <div class="match-team-name">${team.name || 'Unknown'}</div>
+                        <div class="match-team-stats">
+                            <div class="match-team-stat-row">
+                                <span>Rank:</span>
+                                <span>#${ranking.rank || 'N/A'}</span>
+                            </div>
+                            <div class="match-team-stat-row">
+                                <span>Record:</span>
+                                <span>${ranking.wins || 0}-${ranking.losses || 0}-${ranking.ties || 0}</span>
+                            </div>
+                            <div class="match-team-stat-row">
+                                <span>Avg:</span>
+                                <span>${ranking.avgPoints ? ranking.avgPoints.toFixed(1) : 'N/A'}</span>
+                            </div>
                         </div>
-                        <div class="match-time">${time}</div>
                     </div>
                 `;
-            }).join('');
-        } else {
-            fieldInfo.style.display = 'none';
-        }
+            }).join('')}
+        `;
+        container.appendChild(blueCard);
+        
+        // Red alliance card
+        const redCard = document.createElement('div');
+        redCard.className = 'match-team-card-timer red';
+        redCard.innerHTML = `
+            <h4><i class="ri-team-line"></i> Red Alliance</h4>
+            ${redAlliance.teams.map(t => {
+                const team = divTeams[t.number] || {};
+                const ranking = divRankings[t.number] || {};
+                return `
+                    <div class="match-team-item">
+                        <div class="match-team-number">${t.number}</div>
+                        <div class="match-team-name">${team.name || 'Unknown'}</div>
+                        <div class="match-team-stats">
+                            <div class="match-team-stat-row">
+                                <span>Rank:</span>
+                                <span>#${ranking.rank || 'N/A'}</span>
+                            </div>
+                            <div class="match-team-stat-row">
+                                <span>Record:</span>
+                                <span>${ranking.wins || 0}-${ranking.losses || 0}-${ranking.ties || 0}</span>
+                            </div>
+                            <div class="match-team-stat-row">
+                                <span>Avg:</span>
+                                <span>${ranking.avgPoints ? ranking.avgPoints.toFixed(1) : 'N/A'}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('')}
+        `;
+        container.appendChild(redCard);
+        
+        document.getElementById('field-info').style.display = 'block';
+        
     } catch (error) {
-        console.error('Error loading field matches:', error);
+        console.error('Error loading current match teams:', error);
     }
+}
+
+function loadTeamInfo() {
+    // This is now handled by updateFieldMatches which fetches current match data
 }
 
 function formatMatchName(match) {
@@ -947,13 +1201,10 @@ function escapeHtml(text) {
 document.addEventListener('DOMContentLoaded', function() {
     syncTimerState();
     initializeTimerDropdown();
-    loadTeamInfo();
     updateSpotifyState();
     
     // Poll for updates every 200ms for instant responsiveness
     setInterval(syncTimerState, 200);
-    // Refresh team info every 30 seconds
-    setInterval(loadTeamInfo, 30000);
     // Update Spotify state every 2 seconds
     setInterval(updateSpotifyState, 2000);
 });

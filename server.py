@@ -17,6 +17,7 @@ from models.config import Config
 from models.events import Event
 from models.timer import Timer, TimerMilestone, TimerState
 from userManager import UserManager
+from modules.tm_manager.api_client import VexTmApiClient
 
 # This is a placeholder for where the event queue would be shared
 # In a real app, this would be managed more robustly (e.g., via a global context or passed in)
@@ -98,7 +99,7 @@ logging.getLogger().addHandler(queue_handler)
 # notifications, restore the lines above that add NtfyLogHandler when a
 # ntfy_error_endpoint is configured.
 
-logging.getLogger().setLevel(logging.INFO) # Ensure root logger captures all levels
+logging.getLogger().setLevel(logging.ERROR) # Log only errors and above
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +231,7 @@ def api_health():
     
     # Get field connection status
     field_statuses = get_field_statuses()
-    connected_fields = sum(1 for fs in field_statuses if fs.websocket_connected)
+    connected_fields = sum(1 for fs in field_statuses if getattr(fs, 'websocket_connected', True))
     total_fields = len(field_statuses)
     
     health_data = {
@@ -269,18 +270,13 @@ def format_uptime(seconds):
     else:
         return f"{minutes}m"
 
-@app.route('/api/websocket_events')
+@app.route('/api/rankings')
 @login_required()
-def api_websocket_events():
+def api_rankings():
     """
-    API endpoint to get recent websocket events from VEX TM.
+    API endpoint to get rankings. Returns empty rankings if not available.
     """
-    from main import event_processor
-    if event_processor:
-        events = event_processor.get_websocket_events()
-        return jsonify({"status": "ok", "events": events})
-    else:
-        return jsonify({"status": "error", "message": "Event processor not available"}), 503
+    return jsonify({"rankings": []})
 
 @app.route('/api/recent_actions')
 @login_required(roles=["admin", "owner"])
@@ -633,7 +629,81 @@ def room_page(room_id):
 
 @app.route('/api/scheduled_matches')
 def api_scheduled_matches():
-    return jsonify(_read_json(SCHEDULED_MATCHES_FILE, default={}))
+    """
+    API endpoint to get scheduled matches from schedule.json in frontend-friendly format.
+    Transforms nested schedule structure into flat array with match details.
+    """
+    try:
+        schedule_file = os.path.join(STORAGE_PATH, 'schedule.json')
+        logger.info(f"Reading schedule from: {schedule_file}")
+        logger.info(f"File exists: {os.path.exists(schedule_file)}")
+        
+        schedule_data = _read_json(schedule_file, default={})
+        logger.info(f"Schedule data loaded. Keys: {list(schedule_data.keys())}")
+        
+        matches = []
+        divisions = schedule_data.get('divisions', [])
+        logger.info(f"Found {len(divisions)} divisions")
+        
+        for div_idx, division in enumerate(divisions):
+            div_matches = division.get('matches', [])
+            logger.info(f"Division {div_idx}: {len(div_matches)} matches")
+            
+            for match_idx, match in enumerate(div_matches):
+                match_info = match.get('matchInfo', {})
+                match_tuple = match_info.get('matchTuple', {})
+                alliances = match_info.get('alliances', [])
+                
+                logger.debug(f"  Match {match_idx}: tuple={match_tuple}, alliances={len(alliances)}")
+                
+                # Extract team numbers for each alliance
+                red_teams = []
+                blue_teams = []
+                
+                if len(alliances) > 0:
+                    red_alliance = alliances[0]
+                    red_teams = [str(t.get('number', '')) for t in red_alliance.get('teams', [])]
+                
+                if len(alliances) > 1:
+                    blue_alliance = alliances[1]
+                    blue_teams = [str(t.get('number', '')) for t in blue_alliance.get('teams', [])]
+                
+                # Convert timestamp to ISO format for frontend
+                scheduled_time = match_info.get('timeScheduled', 0)
+                start_time = None
+                if scheduled_time:
+                    try:
+                        from datetime import datetime
+                        start_time = datetime.fromtimestamp(scheduled_time).isoformat()
+                    except Exception as e:
+                        logger.error(f"Error converting timestamp {scheduled_time}: {e}")
+                        start_time = None
+                
+                match_obj = {
+                    'match': match_tuple.get('match', 0),
+                    'round': match_tuple.get('round', 'QUAL'),
+                    'division': division.get('id', 0),
+                    'instance': match_tuple.get('instance', 1),
+                    'startTime': start_time or match_info.get('timeScheduled', 0),
+                    'field': 1,  # Default field - can be mapped if needed
+                    'teams': {
+                        'red': red_teams,
+                        'blue': blue_teams
+                    },
+                    'state': match_info.get('state', 'UNPLAYED')
+                }
+                matches.append(match_obj)
+        
+        logger.info(f"Built {len(matches)} total matches for response")
+        if matches:
+            logger.debug(f"First match: {matches[0]}")
+        
+        return jsonify(matches)
+    except Exception as e:
+        logger.error(f"Error in api_scheduled_matches: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+    
+    return jsonify(matches)
 
 @app.route('/api/match_stats/schedule')
 @login_required(roles=["ANY"])
@@ -642,34 +712,153 @@ def api_match_stats_schedule():
     Get full match schedule with team data for match stats page.
     """
     try:
+        logger.info("api_match_stats_schedule called")
+        
         config_data = _read_json(CONFIG_FILE, default={})
+        logger.info(f"Config loaded. Keys: {list(config_data.keys())}")
+        
         config = Config.from_dict(config_data)
         vex_tm_api = config.vex_tm_api or {}
-        if not vex_tm_api.get('enabled', False):
+        logger.info(f"VEX TM API config: {vex_tm_api}")
+        
+        # Check if vex_tm_api has credentials (not just enabled flag)
+        has_credentials = vex_tm_api.get('client_id') and vex_tm_api.get('api_key')
+        vex_tm_enabled = vex_tm_api.get('enabled', has_credentials)  # Default to True if credentials exist
+        logger.info(f"VEX TM API has_credentials: {has_credentials}, enabled: {vex_tm_enabled}")
+        
+        if not vex_tm_enabled:
+            logger.warning("VEX TM API not enabled, returning 503")
             return jsonify({"status": "error", "message": "VEX TM not enabled"}), 503
         
         # Read schedule from file
         schedule_file = os.path.join(STORAGE_PATH, 'schedule.json')
+        logger.info(f"Reading schedule from: {schedule_file}")
         schedule_data = _read_json(schedule_file, {})
+        logger.info(f"Schedule loaded. Divisions: {len(schedule_data.get('divisions', []))}")
         
         # Get field states to determine current match
         field_statuses = get_field_statuses()
-        current_match_id = None
+        logger.info(f"Found {len(field_statuses)} field statuses")
         
+        current_match = None
         for field_state in field_statuses:
-            if field_state.match_id:
-                current_match_id = field_state.match_id
-                break
+            if hasattr(field_state, 'match_name') and field_state.match_name:
+                match_name = field_state.match_name
+                
+                if field_state.state == 'active':
+                    # Field is currently playing this match
+                    logger.info(f"Field {field_state.field_id} active with match: {match_name}")
+                    current_match = _find_match_tuple_by_name(schedule_data, match_name)
+                    if current_match:
+                        logger.info(f"Found current match tuple: {current_match}")
+                        break
+                elif field_state.state == 'finish':
+                    # Field just finished a match, show the next match
+                    logger.info(f"Field {field_state.field_id} finished with match: {match_name}, finding next match")
+                    current_match = _find_next_match_tuple(schedule_data, match_name)
+                    if current_match:
+                        logger.info(f"Found next match tuple: {current_match}")
+                        break
         
+        logger.info(f"Returning schedule with current_match={current_match}")
         return jsonify({
             "status": "ok",
             "schedule": schedule_data,
-            "current_match": current_match_id
+            "current_match": current_match
         })
         
     except Exception as e:
         logger.error(f"Error fetching match schedule: {e}", exc_info=True)
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def _find_match_tuple_by_name(schedule_data, match_name):
+    """
+    Find a matchTuple in the schedule by its display name (e.g., 'Q1', 'F2').
+    Returns the full matchTuple dict or None if not found.
+    """
+    if not schedule_data or not schedule_data.get('divisions'):
+        return None
+    
+    # Parse match_name: first character is round prefix, rest is match number
+    if len(match_name) < 2:
+        return None
+    
+    round_prefix = match_name[0].upper()
+    try:
+        match_num = int(match_name[1:])
+    except ValueError:
+        return None
+    
+    # Map prefix to round value
+    round_map = {
+        'Q': 'QUAL',
+        'F': 'TOP_N',
+    }
+    round_value = round_map.get(round_prefix)
+    if not round_value:
+        logger.debug(f"Unknown round prefix: {round_prefix}")
+        return None
+    
+    # Search all divisions for matching matchTuple
+    for division in schedule_data.get('divisions', []):
+        for match in division.get('matches', []):
+            match_tuple = match.get('matchInfo', {}).get('matchTuple')
+            if match_tuple and match_tuple.get('round') == round_value and match_tuple.get('match') == match_num:
+                return match_tuple
+    
+    logger.debug(f"No matching tuple found for {match_name} (round={round_value}, match={match_num})")
+    return None
+
+
+def _find_next_match_tuple(schedule_data, current_match_name):
+    """
+    Find the next match in sequence after the current match.
+    If at end of qualifications, looks for finals (TOP_N).
+    """
+    if not schedule_data or not schedule_data.get('divisions'):
+        return None
+    
+    if len(current_match_name) < 2:
+        return None
+    
+    round_prefix = current_match_name[0].upper()
+    try:
+        match_num = int(current_match_name[1:])
+    except ValueError:
+        return None
+    
+    # Map prefix to round value
+    round_map = {
+        'Q': 'QUAL',
+        'F': 'TOP_N',
+    }
+    round_value = round_map.get(round_prefix)
+    if not round_value:
+        logger.debug(f"Unknown round prefix: {round_prefix}")
+        return None
+    
+    # Try to find next match in same round
+    next_match_num = match_num + 1
+    for division in schedule_data.get('divisions', []):
+        for match in division.get('matches', []):
+            match_tuple = match.get('matchInfo', {}).get('matchTuple')
+            if match_tuple and match_tuple.get('round') == round_value and match_tuple.get('match') == next_match_num:
+                logger.info(f"Found next match in same round: {round_value} #{next_match_num}")
+                return match_tuple
+    
+    # If in qualifications and no next qual match, look for first finals match
+    if round_value == 'QUAL':
+        logger.info("No next qual match found, looking for first finals (TOP_N) match")
+        for division in schedule_data.get('divisions', []):
+            for match in division.get('matches', []):
+                match_tuple = match.get('matchInfo', {}).get('matchTuple')
+                if match_tuple and match_tuple.get('round') == 'TOP_N' and match_tuple.get('match') == 1:
+                    logger.info("Found first finals match")
+                    return match_tuple
+    
+    logger.debug(f"No next match found after {current_match_name}")
+    return None
 
 @app.route('/api/match_stats/rankings/<int:division_id>')
 @login_required(roles=["ANY"])
@@ -681,7 +870,13 @@ def api_match_stats_rankings(division_id):
         config_data = _read_json(CONFIG_FILE, default={})
         config = Config.from_dict(config_data)
         vex_tm_api = config.vex_tm_api or {}
-        if not vex_tm_api.get('enabled', False):
+        
+        # Check if vex_tm_api has credentials (not just enabled flag)
+        has_credentials = vex_tm_api.get('client_id') and vex_tm_api.get('api_key')
+        vex_tm_enabled = vex_tm_api.get('enabled', has_credentials)  # Default to True if credentials exist
+        
+        if not vex_tm_enabled:
+            logger.warning(f"VEX TM API not enabled for rankings/{division_id}")
             return jsonify({"status": "error", "message": "VEX TM not enabled"}), 503
         
         api_client = VexTmApiClient(
@@ -715,7 +910,13 @@ def api_match_stats_teams(division_id):
         config_data = _read_json(CONFIG_FILE, default={})
         config = Config.from_dict(config_data)
         vex_tm_api = config.vex_tm_api or {}
-        if not vex_tm_api.get('enabled', False):
+        
+        # Check if vex_tm_api has credentials (not just enabled flag)
+        has_credentials = vex_tm_api.get('client_id') and vex_tm_api.get('api_key')
+        vex_tm_enabled = vex_tm_api.get('enabled', has_credentials)  # Default to True if credentials exist
+        
+        if not vex_tm_enabled:
+            logger.warning(f"VEX TM API not enabled for teams/{division_id}")
             return jsonify({"status": "error", "message": "VEX TM not enabled"}), 503
         
         api_client = VexTmApiClient(
@@ -1762,7 +1963,7 @@ def api_spotify_playback():
     from main import spotify_controller
     
     if not spotify_controller:
-        return jsonify({"status": "error", "message": "Spotify not configured"}), 503
+        return jsonify({"status": "error", "message": "Spotify not configured"}), 200
     
     playback = spotify_controller.get_current_playback()
     if playback:
