@@ -1069,10 +1069,16 @@ def match_control():
     return render_template('match_control.html')
 
 @app.route('/match_stats')
-@login_required(roles=["ANY"])
+@login_required(roles=["emcee", "av", "admin", "owner"])
 def match_stats():
     """Match statistics page showing match schedule and team info"""
     return render_template('match_stats.html')
+
+@app.route('/timers')
+@login_required(roles=["emcee", "av", "admin", "owner"])
+def timers_overview():
+    """Timers overview page showing all created timers"""
+    return render_template('timers_overview.html')
 
 @app.route('/timer/<timer_id>')
 def timer_view(timer_id):

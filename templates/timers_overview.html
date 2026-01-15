@@ -1,0 +1,458 @@
+{% extends "base.html" %}
+{% block body_class %}full-width-timers-overview{% endblock %}
+{% block title %}Timers{% endblock %}
+
+{% block content %}
+<style>
+  /* Full-screen page layout */
+  body.full-width-timers-overview {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body.full-width-timers-overview main {
+    max-width: 100% !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 1.5rem !important;
+  }
+
+  .timers-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+  }
+
+  .timers-header h1 {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .timers-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+  }
+
+  .timer-card {
+    background: var(--surface);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px;
+    padding: 1.5rem;
+    transition: all 0.2s;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .timer-card:hover {
+    border-color: var(--primary);
+    box-shadow: 0 4px 12px rgba(122,162,247,0.15);
+  }
+
+  .timer-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+
+  .timer-name {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--primary);
+    margin: 0;
+  }
+
+  .timer-status {
+    padding: 0.25rem 0.75rem;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .timer-status.running {
+    background: rgba(158,206,106,0.2);
+    color: #9ece6a;
+  }
+
+  .timer-status.stopped {
+    background: rgba(123,131,150,0.2);
+    color: var(--muted);
+  }
+
+  .timer-status.finished {
+    background: rgba(122,162,247,0.2);
+    color: var(--primary);
+  }
+
+  .timer-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .timer-info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.9rem;
+  }
+
+  .timer-info-label {
+    color: var(--muted);
+  }
+
+  .timer-info-value {
+    color: var(--fg);
+    font-weight: 500;
+  }
+
+  .timer-display {
+    background: rgba(122,162,247,0.1);
+    border: 2px solid var(--primary);
+    border-radius: 8px;
+    padding: 1.5rem;
+    text-align: center;
+  }
+
+  .timer-time {
+    font-size: 3rem;
+    font-weight: 700;
+    color: var(--primary);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+
+  .timer-time.warning {
+    color: #e0af68;
+  }
+
+  .timer-time.critical {
+    color: var(--danger);
+  }
+
+  .timer-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .timer-actions button {
+    flex: 1;
+    padding: 0.75rem;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+
+  .btn-view {
+    background: rgba(122,162,247,0.2);
+    color: var(--primary);
+    border: 1px solid var(--primary);
+  }
+
+  .btn-view:hover {
+    background: rgba(122,162,247,0.3);
+  }
+
+  .no-timers {
+    text-align: center;
+    padding: 4rem 2rem;
+    color: var(--muted);
+  }
+
+  .no-timers i {
+    font-size: 4rem;
+    margin-bottom: 1rem;
+    color: var(--primary);
+    opacity: 0.5;
+  }
+
+  .loading {
+    text-align: center;
+    padding: 4rem 2rem;
+    color: var(--muted);
+  }
+
+  .loading i {
+    font-size: 3rem;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .milestones-summary {
+    font-size: 0.85rem;
+    color: var(--muted);
+    padding: 0.5rem;
+    background: rgba(255,255,255,0.02);
+    border-radius: 6px;
+  }
+
+  .refresh-btn {
+    background: rgba(122,162,247,0.1);
+    color: var(--primary);
+    border: 1px solid var(--primary);
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    transition: all 0.2s;
+  }
+
+  .refresh-btn:hover {
+    background: rgba(122,162,247,0.2);
+  }
+
+  .refresh-btn i {
+    transition: transform 0.3s;
+  }
+
+  .refresh-btn.refreshing i {
+    animation: spin 0.6s linear infinite;
+  }
+</style>
+
+<div class="timers-header">
+  <h1><i class="ri-timer-line"></i> Timers</h1>
+  <button class="refresh-btn" onclick="refreshTimers()" id="refresh-btn">
+    <i class="ri-refresh-line"></i> Refresh
+  </button>
+</div>
+
+<div id="timers-container" class="timers-grid">
+  <div class="loading">
+    <i class="ri-loader-4-line"></i>
+    <p>Loading timers...</p>
+  </div>
+</div>
+
+<script>
+let timers = {};
+let timerStates = {};
+let updateInterval = null;
+
+async function fetchTimers() {
+  try {
+    const [timersResponse, statusResponse] = await Promise.all([
+      fetch('/api/timers'),
+      fetch('/api/timers/status')
+    ]);
+    
+    const timersData = await timersResponse.json();
+    const statusData = await statusResponse.json();
+    
+    timers = timersData;
+    timerStates = statusData;
+    
+    renderTimers();
+  } catch (error) {
+    console.error('Error fetching timers:', error);
+    document.getElementById('timers-container').innerHTML = `
+      <div class="no-timers">
+        <i class="ri-error-warning-line"></i>
+        <h2>Error Loading Timers</h2>
+        <p>Failed to load timers. Please try refreshing the page.</p>
+      </div>
+    `;
+  }
+}
+
+function renderTimers() {
+  const container = document.getElementById('timers-container');
+  
+  const timerIds = Object.keys(timers);
+  
+  if (timerIds.length === 0) {
+    container.innerHTML = `
+      <div class="no-timers">
+        <i class="ri-timer-line"></i>
+        <h2>No Timers Created</h2>
+        <p>No timers have been created yet. Admins can create timers from the Timer Admin page.</p>
+      </div>
+    `;
+    return;
+  }
+  
+  container.innerHTML = '';
+  
+  timerIds.forEach(timerId => {
+    const timer = timers[timerId];
+    const state = timerStates[timerId] || { is_running: false, remaining: timer.duration, elapsed: 0 };
+    
+    const card = document.createElement('div');
+    card.className = 'timer-card';
+    
+    // Determine status
+    let status = 'stopped';
+    let statusText = 'Stopped';
+    if (state.is_running) {
+      status = 'running';
+      statusText = 'Running';
+    } else if (state.elapsed >= timer.duration) {
+      status = 'finished';
+      statusText = 'Finished';
+    }
+    
+    // Format time
+    const timeToDisplay = state.is_running ? state.remaining : state.elapsed;
+    const { minutes, seconds } = formatTime(timeToDisplay);
+    
+    // Determine time color class
+    let timeClass = '';
+    if (state.is_running) {
+      if (state.remaining < 10) {
+        timeClass = 'critical';
+      } else if (state.remaining < 30) {
+        timeClass = 'warning';
+      }
+    }
+    
+    // Field info
+    const fieldInfo = timer.field_id ? `Field ${timer.field_id}` : 'Global';
+    
+    // Milestones count
+    const milestonesCount = timer.milestones ? timer.milestones.length : 0;
+    
+    card.innerHTML = `
+      <div class="timer-card-header">
+        <h3 class="timer-name">${escapeHtml(timer.name)}</h3>
+        <span class="timer-status ${status}">${statusText}</span>
+      </div>
+      
+      <div class="timer-display">
+        <div class="timer-time ${timeClass}" id="timer-display-${timerId}">
+          ${minutes}:${seconds}
+        </div>
+      </div>
+      
+      <div class="timer-info">
+        <div class="timer-info-row">
+          <span class="timer-info-label">Duration:</span>
+          <span class="timer-info-value">${formatDuration(timer.duration)}</span>
+        </div>
+        <div class="timer-info-row">
+          <span class="timer-info-label">Field:</span>
+          <span class="timer-info-value">${fieldInfo}</span>
+        </div>
+        ${milestonesCount > 0 ? `
+        <div class="milestones-summary">
+          <i class="ri-flag-line"></i> ${milestonesCount} milestone${milestonesCount !== 1 ? 's' : ''}
+        </div>
+        ` : ''}
+      </div>
+      
+      <div class="timer-actions">
+        <button class="btn-view" onclick="viewTimer('${timerId}')">
+          <i class="ri-eye-line"></i> View
+        </button>
+      </div>
+    `;
+    
+    container.appendChild(card);
+  });
+}
+
+function formatTime(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return {
+    minutes: String(mins).padStart(2, '0'),
+    seconds: String(secs).padStart(2, '0')
+  };
+}
+
+function formatDuration(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (mins > 0 && secs > 0) {
+    return `${mins}m ${secs}s`;
+  } else if (mins > 0) {
+    return `${mins}m`;
+  } else {
+    return `${secs}s`;
+  }
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function viewTimer(timerId) {
+  window.open(`/timer/${timerId}`, '_blank');
+}
+
+async function refreshTimers() {
+  const btn = document.getElementById('refresh-btn');
+  btn.classList.add('refreshing');
+  await fetchTimers();
+  setTimeout(() => {
+    btn.classList.remove('refreshing');
+  }, 600);
+}
+
+function updateTimerDisplays() {
+  Object.keys(timers).forEach(timerId => {
+    const state = timerStates[timerId];
+    if (!state) return;
+    
+    const displayEl = document.getElementById(`timer-display-${timerId}`);
+    if (!displayEl) return;
+    
+    const timeToDisplay = state.is_running ? state.remaining : state.elapsed;
+    const { minutes, seconds } = formatTime(timeToDisplay);
+    displayEl.textContent = `${minutes}:${seconds}`;
+    
+    // Update color class
+    displayEl.className = 'timer-time';
+    if (state.is_running) {
+      if (state.remaining < 10) {
+        displayEl.classList.add('critical');
+      } else if (state.remaining < 30) {
+        displayEl.classList.add('warning');
+      }
+    }
+  });
+}
+
+// Initial load
+fetchTimers();
+
+// Auto-refresh every 1 second for running timers
+updateInterval = setInterval(() => {
+  // Update displays for running timers
+  Object.keys(timerStates).forEach(timerId => {
+    const state = timerStates[timerId];
+    if (state && state.is_running && state.remaining > 0) {
+      const now = Date.now() / 1000;
+      state.remaining = Math.max(0, state.end_timestamp - now);
+      state.elapsed = state.duration - state.remaining;
+    }
+  });
+  updateTimerDisplays();
+}, 1000);
+
+// Fetch fresh data every 5 seconds
+setInterval(fetchTimers, 5000);
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', () => {
+  if (updateInterval) {
+    clearInterval(updateInterval);
+  }
+});
+</script>
+
+{% endblock %}
