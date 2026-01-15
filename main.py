@@ -26,6 +26,10 @@ logging.getLogger("server").setLevel(logging.INFO)
 # Enable debug logging specifically for the zeros controller
 logging.getLogger("modules.vfx.zeros.controller").setLevel(logging.DEBUG)
 
+# Global references for server.py to access
+spotify_controller = None
+event_processor = None
+
 def run_flask(host, port):
     """Function to run Flask app in a separate thread."""
     logger.info(f"Starting Flask server on {host}:{port}")
@@ -142,6 +146,8 @@ async def main():
     """
     Main function to initialize and run all components of the application.
     """
+    global spotify_controller, event_processor
+    
     logger.info("Initializing application...")
 
     # A queue that can be shared between processes if we need to scale out.
@@ -152,6 +158,9 @@ async def main():
     # The EventProcessor loads the full config, we'll use that as the source of truth
     event_processor = EventProcessor(event_queue)
     config = event_processor.config
+    
+    # Expose spotify controller globally
+    spotify_controller = event_processor.spotify_controller
 
     # Get VEX TM API credentials from the loaded config
     vex_tm_api_config = config.vex_tm_api

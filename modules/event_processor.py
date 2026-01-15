@@ -33,6 +33,10 @@ class EventProcessor:
         self.audit_log_file = os.path.join(self.storage_path, 'events.log')
         self.timer_state_file = os.path.join(self.storage_path, 'timer_state.json')
         
+        # WebSocket event log - keep last 50 events in memory
+        self.websocket_events = []
+        self.max_websocket_events = 50
+        
         self.config = self._load_config()
         self.action_mappings = self._load_action_mappings()
         
@@ -226,6 +230,26 @@ class EventProcessor:
                 return None # Cannot determine prefix
 
         return f"{round_prefix}{match_obj.get('match', '')}"
+    
+    def _log_websocket_event(self, event):
+        """Log websocket event to in-memory buffer"""
+        from datetime import datetime
+        event_log = {
+            'timestamp': datetime.now().isoformat(),
+            'type': event.type,
+            'field': event.field,
+            'payload': event.payload
+        }
+        
+        self.websocket_events.insert(0, event_log)
+        
+        # Keep only the last N events
+        if len(self.websocket_events) > self.max_websocket_events:
+            self.websocket_events = self.websocket_events[:self.max_websocket_events]
+    
+    def get_websocket_events(self):
+        """Return recent websocket events"""
+        return self.websocket_events.copy()
 
     def _determine_new_state(self, event, current_state):
         # This logic will be based on the VEX TM API docs and the desired state flow
@@ -294,6 +318,12 @@ class EventProcessor:
             if self.spotify_controller and not self.config.paused.get("audio"):
                 action_data_copy = action_data.copy()
                 action_data_copy["metadata"] = action_data_copy.get("metadata", {}).copy()
+
+                # Move Spotify-specific fields into metadata
+                spotify_fields = ["track_uri", "position_ms", "device_id", "start_time_s", "playlist_uri", "context_uri"]
+                for field in spotify_fields:
+                    if field in action_data_copy:
+                        action_data_copy["metadata"][field] = action_data_copy.pop(field)
 
                 if action_data.get("command") == "play_playlist_track" and event and event.field:
                     field_state = await self._get_field_state(event.field)
@@ -376,6 +406,11 @@ class EventProcessor:
             logger.info(f"Handling manual action: {event.payload}")
             await self._execute_action(event.payload)
             return True
+        
+        if event.type == "tm_command":
+            logger.info(f"Handling TM command: {event.payload}")
+            await self._handle_tm_command(event)
+            return True
             
         return False
     
@@ -432,11 +467,11 @@ class EventProcessor:
         logger.info(f"Timer {timer_id} milestone at {milestone_time}s: {action_type}")
         
         # Execute the action based on type
-        if action_type == "spotify":
+        if action_type in ["audio", "spotify"]:
             await self._execute_timer_action("audio", action_payload, event)
         elif action_type == "lighting":
             await self._execute_timer_action("lighting", action_payload, event)
-        elif action_type == "atem":
+        elif action_type in ["video", "atem"]:
             await self._execute_timer_action("video", action_payload, event)
         elif action_type == "message":
             # Messages are displayed on the frontend, no action needed here
@@ -498,7 +533,10 @@ class EventProcessor:
     
     async def _execute_timer_action(self, action_type, action_data, event):
         """Execute a timer-triggered action (reuses existing action execution logic)"""
-        await self._execute_action(action_type, action_data, event)
+        # Merge action_type into action_data if needed
+        if isinstance(action_data, dict) and 'type' not in action_data:
+            action_data = {'type': action_type, **action_data}
+        await self._execute_action(action_data, event)
 
     async def _read_popups(self):
         try:
@@ -541,6 +579,10 @@ class EventProcessor:
             try:
                 event = await self.event_queue.get()
                 logger.info(f"Processing event: {event.to_json()}")
+                
+                # Log websocket events (those coming from VEX TM)
+                if event.type not in ['timer_milestone', 'timer_finished', 'timer_stopped', 'manual_action', 'tm_command']:
+                    self._log_websocket_event(event)
 
                 # If the event is an audienceDisplayChanged without a field, find the active field
                 if not event.field and event.type == "audienceDisplayChanged":
@@ -563,6 +605,24 @@ class EventProcessor:
                 self.event_queue.task_done()
             except Exception as e:
                 logger.error(f"Error processing event: {e}", exc_info=True)
+    
+    async def _handle_tm_command(self, event):
+        """Handle TM command events - send commands via websocket"""
+        field_id = event.field
+        command = event.payload.get("command")
+        params = event.payload.get("params", {})
+        
+        if not field_id or not command:
+            logger.error(f"Invalid tm_command payload: {event.payload}")
+            return
+        
+        # Check if we have a TM connector instance
+        # This would need to be passed to the event processor or stored globally
+        # For now, we'll log the command - actual implementation would send via websocket
+        logger.info(f"TM Command for field {field_id}: {command} with params {params}")
+        
+        # TODO: If you have access to the VexTmConnector instance, send the command:
+        # await connector.send_command(field_id, command, params)
 
 
 if __name__ == '__main__':

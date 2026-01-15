@@ -1,115 +1,585 @@
 {% extends 'base.html' %}
 
+{% block body_class %}full-width-dashboard-page{% endblock %}
+
 {% block title %}Live Dashboard{% endblock %}
 
 {% block content %}
 <section aria-labelledby="dashboard-heading">
-    <h1 id="dashboard-heading">Live Field Dashboard</h1>
-    <p class="muted">Real-time status of all competition fields.</p>
-    <div id="fields-container" class="fields-grid">
-        <!-- Field status cards will be injected here by JavaScript -->
+    <h1 id="dashboard-heading"><i class="ri-dashboard-line"></i> Live Event Dashboard</h1>
+    <p class="muted">Real-time status and data from the VEX Tournament Manager</p>
+    
+    <div class="dashboard-grid">
+        <!-- Field Status -->
+        <div class="dashboard-card">
+            <h2><i class="ri-map-pin-line"></i> Field Status</h2>
+            <div id="fields-container" class="field-list">
+                <!-- Field status cards will be injected here -->
+            </div>
+        </div>
+
+        <!-- WebSocket Updates -->
+        <div class="dashboard-card">
+            <h2><i class="ri-radio-line"></i> WebSocket Activity</h2>
+            <div id="websocket-status" class="status-indicator">
+                <span class="status-dot disconnected"></span>
+                <span>Disconnected</span>
+            </div>
+            <div id="event-feed" class="event-feed">
+                <p class="muted">No events received yet</p>
+            </div>
+        </div>
+
+        <!-- Match Schedule -->
+        <div class="dashboard-card">
+            <h2><i class="ri-calendar-line"></i> Upcoming Matches</h2>
+            <div id="schedule-container" class="schedule-list">
+                <p class="muted">Loading schedule...</p>
+            </div>
+        </div>
+
+        <!-- Rankings & Teams -->
+        <div class="dashboard-card">
+            <h2><i class="ri-trophy-line"></i> Rankings & Teams</h2>
+            <div class="tabs">
+                <button class="tab-btn active" onclick="switchTab('rankings')">Rankings</button>
+                <button class="tab-btn" onclick="switchTab('teams')">Teams</button>
+            </div>
+            <div id="rankings-container" class="tab-content active">
+                <p class="muted">Loading rankings...</p>
+            </div>
+            <div id="teams-container" class="tab-content">
+                <p class="muted">Loading teams...</p>
+            </div>
+        </div>
     </div>
 </section>
 
 <style>
-    .fields-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-        gap: 1.5rem;
-        margin-top: 1.5rem;
-    }
+body.full-width-dashboard-page {
+    margin: 0 !important;
+    padding: 0 !important;
+}
 
-    .field-card {
-        background: var(--surface);
-        border-radius: 8px;
-        padding: 1.25rem;
-        border-left-width: 5px;
-        border-left-style: solid;
-        transition: all 0.2s ease-in-out;
-    }
+body.full-width-dashboard-page main {
+    max-width: 100% !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 2rem !important;
+}
 
-    .field-card h2 {
-        margin-top: 0;
-        font-size: 1.5rem;
-    }
+body.full-width-dashboard-page section {
+    max-width: 100% !important;
+}
 
-    .field-card p {
-        margin: 0.25rem 0;
-    }
-    
-    .field-card .state {
-        font-weight: 600;
-    }
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 1.5rem;
+    margin-top: 1.5rem;
+    height: calc(100vh - 180px);
+}
+
+.dashboard-card {
+    background: var(--surface);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 4px;
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.dashboard-card h2 {
+    margin: 0 0 1rem 0;
+    color: var(--primary);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1.3rem;
+}
+
+.field-list {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.field-item {
+    background: var(--bg-2);
+    border-left: 4px solid var(--primary);
+    border-radius: 4px;
+    padding: 1rem;
+}
+
+.field-item h3 {
+    margin: 0 0 0.5rem 0;
+    color: var(--fg);
+    font-size: 1.1rem;
+}
+
+.field-item p {
+    margin: 0.25rem 0;
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.field-item .state {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    background: rgba(122, 162, 247, 0.2);
+    color: var(--primary);
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    padding: 0.5rem;
+    background: var(--bg-2);
+    border-radius: 4px;
+}
+
+.status-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+.status-dot.connected {
+    background: #9ece6a;
+    box-shadow: 0 0 8px rgba(158, 206, 106, 0.6);
+}
+
+.status-dot.disconnected {
+    background: var(--muted);
+    animation: none;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.event-feed {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 0.5rem;
+}
+
+.event-item {
+    background: var(--bg-2);
+    border-left: 3px solid var(--accent);
+    padding: 0.75rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+.event-item .event-time {
+    color: var(--muted);
+    font-size: 0.8rem;
+}
+
+.event-item .event-type {
+    color: var(--primary);
+    font-weight: 600;
+}
+
+.schedule-list {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.match-item {
+    background: var(--bg-2);
+    border-radius: 4px;
+    padding: 0.75rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.match-info {
+    flex: 1;
+}
+
+.match-number {
+    font-weight: 700;
+    color: var(--primary);
+    font-size: 1rem;
+}
+
+.match-teams {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-top: 0.25rem;
+}
+
+.match-time {
+    color: var(--fg);
+    font-size: 0.9rem;
+}
+
+.tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+
+.tab-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+}
+
+.tab-btn.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+}
+
+.tab-btn:hover {
+    color: var(--fg);
+}
+
+.tab-content {
+    display: none;
+    flex: 1;
+    overflow-y: auto;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.ranking-list, .team-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.ranking-item, .team-item {
+    background: var(--bg-2);
+    border-radius: 4px;
+    padding: 0.75rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.ranking-position {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--primary);
+    min-width: 40px;
+}
+
+.ranking-team {
+    flex: 1;
+    margin: 0 1rem;
+}
+
+.ranking-team-number {
+    font-weight: 700;
+    color: var(--fg);
+}
+
+.ranking-team-name {
+    color: var(--muted);
+    font-size: 0.85rem;
+}
+
+.ranking-stats {
+    text-align: right;
+    color: var(--muted);
+    font-size: 0.85rem;
+}
+
+.team-number {
+    font-weight: 700;
+    color: var(--primary);
+    font-size: 1.1rem;
+}
+
+.team-name {
+    color: var(--fg);
+    font-size: 0.9rem;
+}
+
+.team-location {
+    color: var(--muted);
+    font-size: 0.8rem;
+}
 </style>
 
 <script>
-    function getStatusColor(state) {
-        switch (state) {
-            case 'active':
-            case 'matchStarted':
-                return 'var(--primary)';
-            case 'queued':
-            case 'fieldMatchAssigned':
-                return 'var(--accent)';
-            case 'finish':
-            case 'matchStopped':
-                return 'var(--secondary)';
-            case 'standby':
-                return 'var(--muted)';
-            default:
-                return 'var(--muted)';
+let eventCount = 0;
+const MAX_EVENTS = 20;
+let currentTab = 'rankings';
+
+function getStatusColor(state) {
+    switch (state) {
+        case 'active':
+        case 'matchStarted':
+            return '#7aa2f7';
+        case 'queued':
+        case 'fieldMatchAssigned':
+            return '#bb9af7';
+        case 'finish':
+        case 'matchStopped':
+            return '#9ece6a';
+        case 'standby':
+            return '#565f89';
+        default:
+            return '#565f89';
+    }
+}
+
+// Field Status Updates
+async function fetchFieldStatus() {
+    try {
+        const response = await fetch('/api/status');
+        if (!response.ok) return;
+        
+        const fields = await response.json();
+        const container = document.getElementById('fields-container');
+        
+        if (fields.length === 0) {
+            container.innerHTML = '<p class="muted">No field data available</p>';
+        } else {
+            container.innerHTML = fields.map(field => `
+                <div class="field-item" style="border-left-color: ${getStatusColor(field.state)}">
+                    <h3>Field ${field.field_id}</h3>
+                    <p><span class="state">${field.state || 'Unknown'}</span></p>
+                    <p><strong>Match:</strong> ${field.match_name || 'None'}</p>
+                    <p class="event-time">${new Date(field.last_updated).toLocaleTimeString()}</p>
+                </div>
+            `).join('');
         }
+    } catch (error) {
+        console.error('Error fetching field status:', error);
     }
+}
 
-    function createFieldCard(field) {
-        const card = document.createElement('div');
-        card.className = 'field-card';
-        card.id = `field-${field.field_id}`;
-        card.style.borderLeft = `5px solid ${getStatusColor(field.state)}`;
-
-        const lastUpdated = new Date(field.last_updated).toLocaleTimeString();
-
-        card.innerHTML = `
-            <h2>Field ${field.field_id}</h2>
-            <p class="state"><strong>State:</strong> ${field.state || 'N/A'}</p>
-            <p><strong>Match:</strong> ${field.match_name || 'None'}</p>
-            <p class="muted"><small>Last Updated: ${lastUpdated}</small></p>
-        `;
-        return card;
-    }
-
-    async function fetchAndUpdateStatus() {
-        try {
-            const response = await fetch('/api/status');
-            if (!response.ok) {
-                console.error('Failed to fetch status');
-                return;
-            }
-            const fields = await response.json();
-            const container = document.getElementById('fields-container');
+// WebSocket Status and Events
+async function fetchWebSocketEvents() {
+    try {
+        const response = await fetch('/api/websocket_events');
+        if (!response.ok) return;
+        
+        const data = await response.json();
+        const feed = document.getElementById('event-feed');
+        const statusIndicator = document.getElementById('websocket-status');
+        
+        if (data.status === 'ok' && data.events && data.events.length > 0) {
+            // Update connection status
+            statusIndicator.innerHTML = `
+                <span class="status-dot connected"></span>
+                <span>Connected - ${data.events.length} recent events</span>
+            `;
             
-            // Naive update: clear and redraw all. For more complex apps, diffing would be better.
-            container.innerHTML = ''; 
-
-            if (fields.length === 0) {
-                container.innerHTML = '<p>No field data available. Is the event processor running?</p>';
-            } else {
-                fields.forEach(field => {
-                    const card = createFieldCard(field);
-                    container.appendChild(card);
-                });
-            }
-        } catch (error) {
-            console.error('Error fetching or updating status:', error);
-            const container = document.getElementById('fields-container');
-            container.innerHTML = '<p class="error">Could not connect to the server to fetch status.</p>';
+            // Display events
+            feed.innerHTML = data.events.map(event => {
+                const time = new Date(event.timestamp).toLocaleTimeString();
+                const payloadPreview = JSON.stringify(event.payload).substring(0, 100);
+                
+                return `
+                    <div class="event-item">
+                        <div class="event-type">${event.type}</div>
+                        <div>Field: ${event.field || 'N/A'} - ${payloadPreview}${JSON.stringify(event.payload).length > 100 ? '...' : ''}</div>
+                        <div class="event-time">${time}</div>
+                    </div>
+                `;
+            }).join('');
+        } else {
+            statusIndicator.innerHTML = `
+                <span class="status-dot disconnected"></span>
+                <span>No events received</span>
+            `;
+            feed.innerHTML = '<p class="muted">No websocket events received yet</p>';
         }
+    } catch (error) {
+        console.error('Error fetching websocket events:', error);
+        const statusIndicator = document.getElementById('websocket-status');
+        statusIndicator.innerHTML = `
+            <span class="status-dot disconnected"></span>
+            <span>Disconnected</span>
+        `;
     }
+}
 
-    // Fetch status every 2 seconds
-    setInterval(fetchAndUpdateStatus, 2000);
+// Match Schedule
+async function fetchSchedule() {
+    try {
+        const response = await fetch('/api/scheduled_matches');
+        if (!response.ok) return;
+        
+        const matches = await response.json();
+        const container = document.getElementById('schedule-container');
+        
+        if (!matches || matches.length === 0) {
+            container.innerHTML = '<p class="muted">No matches scheduled</p>';
+        } else {
+            const upcoming = matches.slice(0, 15);
+            container.innerHTML = upcoming.map(match => {
+                const matchName = formatMatchName(match.match);
+                const time = new Date(match.startTime).toLocaleTimeString('en-US', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                
+                return `
+                    <div class="match-item">
+                        <div class="match-info">
+                            <div class="match-number">${matchName} - Field ${match.field}</div>
+                            <div class="match-teams">
+                                Red: ${match.teams.red.join(', ')} vs Blue: ${match.teams.blue.join(', ')}
+                            </div>
+                        </div>
+                        <div class="match-time">${time}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+    } catch (error) {
+        console.error('Error fetching schedule:', error);
+        document.getElementById('schedule-container').innerHTML = '<p class="muted">Schedule not available</p>';
+    }
+}
 
-    // Initial fetch
-    document.addEventListener('DOMContentLoaded', fetchAndUpdateStatus);
+// Rankings
+async function fetchRankings() {
+    try {
+        const response = await fetch('/api/rankings');
+        if (!response.ok) return;
+        
+        const data = await response.json();
+        const container = document.getElementById('rankings-container');
+        
+        if (!data || !data.rankings || data.rankings.length === 0) {
+            container.innerHTML = '<p class="muted">No rankings available</p>';
+        } else {
+            const topRankings = data.rankings.slice(0, 20);
+            container.innerHTML = `<div class="ranking-list">${topRankings.map(ranking => {
+                const teams = ranking.alliance?.teams || [];
+                const teamNumbers = teams.map(t => t.number).join(', ');
+                const teamNames = teams.map(t => t.name).join(', ');
+                
+                return `
+                    <div class="ranking-item">
+                        <div class="ranking-position">${ranking.rank}</div>
+                        <div class="ranking-team">
+                            <div class="ranking-team-number">${teamNumbers}</div>
+                            <div class="ranking-team-name">${teamNames || 'Unknown'}</div>
+                        </div>
+                        <div class="ranking-stats">
+                            ${ranking.wins || 0}-${ranking.losses || 0}-${ranking.ties || 0}<br>
+                            <span style="color: var(--primary)">${ranking.avgPoints?.toFixed(1) || '0.0'} pts</span>
+                        </div>
+                    </div>
+                `;
+            }).join('')}</div>`;
+        }
+    } catch (error) {
+        console.error('Error fetching rankings:', error);
+        document.getElementById('rankings-container').innerHTML = '<p class="muted">Rankings not available</p>';
+    }
+}
+
+// Teams
+async function fetchTeams() {
+    try {
+        const response = await fetch('/api/teams');
+        if (!response.ok) return;
+        
+        const data = await response.json();
+        const container = document.getElementById('teams-container');
+        
+        if (!data || !data.teams || data.teams.length === 0) {
+            container.innerHTML = '<p class="muted">No teams available</p>';
+        } else {
+            container.innerHTML = `<div class="team-list">${data.teams.map(team => {
+                const location = [team.city, team.state, team.country].filter(Boolean).join(', ');
+                
+                return `
+                    <div class="team-item">
+                        <div>
+                            <div class="team-number">${team.number}</div>
+                            <div class="team-name">${team.name || 'Unknown'}</div>
+                            <div class="team-location">${location || 'Location unknown'}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('')}</div>`;
+        }
+    } catch (error) {
+        console.error('Error fetching teams:', error);
+        document.getElementById('teams-container').innerHTML = '<p class="muted">Teams not available</p>';
+    }
+}
+
+function switchTab(tab) {
+    currentTab = tab;
+    
+    // Update buttons
+    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    event.target.classList.add('active');
+    
+    // Update content
+    document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+    document.getElementById(`${tab}-container`).classList.add('active');
+    
+    // Fetch data if needed
+    if (tab === 'teams' && document.getElementById('teams-container').innerHTML.includes('Loading')) {
+        fetchTeams();
+    }
+}
+
+function formatMatchName(match) {
+    if (!match) return 'Unknown';
+    
+    const roundMap = {
+        'qual': 'Q',
+        'QUAL': 'Q',
+        'top_n': 'F',
+        'TOP_N': 'F'
+    };
+    
+    const roundKey = typeof match.round === 'string' ? match.round.toLowerCase() : match.round;
+    const prefix = roundMap[roundKey] || 'M';
+    
+    return `${prefix}${match.match || ''}`;
+}
+
+// Initialize and update
+document.addEventListener('DOMContentLoaded', function() {
+    fetchFieldStatus();
+    fetchSchedule();
+    fetchRankings();
+    fetchWebSocketEvents();
+    
+    // Poll for updates
+    setInterval(fetchFieldStatus, 2000);
+    setInterval(fetchSchedule, 10000);
+    setInterval(fetchRankings, 30000);
+    setInterval(fetchWebSocketEvents, 1000); // Update websocket events frequently
+});
 </script>
 {% endblock %}

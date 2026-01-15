@@ -201,6 +201,18 @@ def api_status():
     field_statuses = get_field_statuses()
     return jsonify([status.to_dict() for status in field_statuses])
 
+@app.route('/api/websocket_events')
+def api_websocket_events():
+    """
+    API endpoint to get recent websocket events from VEX TM.
+    """
+    from main import event_processor
+    if event_processor:
+        events = event_processor.get_websocket_events()
+        return jsonify({"status": "ok", "events": events})
+    else:
+        return jsonify({"status": "error", "message": "Event processor not available"}), 503
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -561,6 +573,7 @@ def dismiss_popup():
 
 
 @app.route('/api/config')
+@login_required()
 def api_config():
     """
     API endpoint to get the current config.
@@ -842,6 +855,15 @@ def timer_admin():
     """Timer administration page for creating and managing timers"""
     return render_template('timer_admin.html')
 
+@app.route('/timer_admin/<timer_id>/expand')
+@login_required(roles=["admin"])
+def timer_admin_expanded(timer_id):
+    """Expanded fullscreen timer control interface"""
+    timers = _read_json(TIMERS_SAVED_FILE, {})
+    if timer_id not in timers:
+        return render_template('error.html', error_code=404, error_message="Timer not found"), 404
+    return render_template('timer_admin_expanded.html', timer_id=timer_id, timer_name=timers[timer_id]['name'])
+
 @app.route('/timer/<timer_id>')
 def timer_view(timer_id):
     """Public timer viewer page - no authentication required"""
@@ -928,7 +950,10 @@ def api_timers_create():
             name=name,
             duration=data['duration'],
             milestones=milestones,
-            field_id=data.get('field_id')
+            field_id=data.get('field_id'),
+            ready_states=data.get('ready_states', {}),
+            auto_start_tm=data.get('auto_start_tm', False),
+            match_number=data.get('match_number')
         )
         
         # Save to storage
@@ -979,7 +1004,10 @@ def api_timer_update(timer_id):
             duration=data['duration'],
             milestones=milestones,
             field_id=data.get('field_id'),
-            created_at=data.get('created_at')
+            created_at=data.get('created_at'),
+            ready_states=data.get('ready_states', {}),
+            auto_start_tm=data.get('auto_start_tm', False),
+            match_number=data.get('match_number')
         )
         
         # Save to storage
@@ -1123,6 +1151,9 @@ def api_timer_state(timer_id):
                     current_message = milestone['message']
                     break
         
+        # Get display message if any
+        display_message = timer_states[timer_id].get('current_display_message', '')
+        
         return jsonify({
             "status": "ok",
             "timer_id": timer_id,
@@ -1133,10 +1164,15 @@ def api_timer_state(timer_id):
             "end_timestamp": end_timestamp,
             "server_time": current_time,
             "current_message": current_message,
+            "display_message": display_message,
             "field_id": timer_data.get('field_id')
         })
     else:
         # Timer not started yet
+        display_message = ''
+        if timer_id in timer_states:
+            display_message = timer_states[timer_id].get('current_display_message', '')
+        
         return jsonify({
             "status": "ok",
             "timer_id": timer_id,
@@ -1147,8 +1183,275 @@ def api_timer_state(timer_id):
             "end_timestamp": None,
             "server_time": current_time,
             "current_message": None,
+            "display_message": display_message,
             "field_id": timer_data.get('field_id')
         })
+
+@app.route('/api/timer/<timer_id>/ready', methods=['POST'])
+def api_timer_ready(timer_id):
+    """Mark a user as ready for this timer"""
+    timers = _read_json(TIMERS_SAVED_FILE, {})
+    if timer_id not in timers:
+        return jsonify({"status": "error", "message": "Timer not found"}), 404
+    
+    data = request.json or {}
+    user_id = data.get('user_id', 'anonymous')
+    
+    timer = Timer.from_dict(timers[timer_id])
+    timer.ready_states[user_id] = True
+    
+    timers[timer_id] = timer.to_dict()
+    _atomic_write(TIMERS_SAVED_FILE, timers)
+    
+    return jsonify({"status": "ok", "ready_states": timer.ready_states})
+
+@app.route('/api/timer/<timer_id>/ready/clear', methods=['POST'])
+@login_required(roles=["admin"])
+def api_timer_ready_clear(timer_id):
+    """Clear all ready states for this timer"""
+    timers = _read_json(TIMERS_SAVED_FILE, {})
+    if timer_id not in timers:
+        return jsonify({"status": "error", "message": "Timer not found"}), 404
+    
+    timer = Timer.from_dict(timers[timer_id])
+    timer.ready_states = {}
+    
+    timers[timer_id] = timer.to_dict()
+    _atomic_write(TIMERS_SAVED_FILE, timers)
+    
+    return jsonify({"status": "ok"})
+
+@app.route('/api/timer/<timer_id>/team_info', methods=['GET'])
+def api_timer_team_info(timer_id):
+    """Get team information for timer's assigned field"""
+    timers = _read_json(TIMERS_SAVED_FILE, {})
+    if timer_id not in timers:
+        return jsonify({"status": "error", "message": "Timer not found"}), 404
+    
+    timer_data = timers[timer_id]
+    field_id = timer_data.get('field_id')
+    
+    if not field_id:
+        return jsonify({"status": "ok", "teams": [], "match": None, "message": "No field assigned"})
+    
+    # Try to get the TM API client from config
+    config_data = _read_json(CONFIG_FILE, {})
+    config = Config.from_dict(config_data)
+    
+    if not all([config.vex_tm_client_id, config.vex_tm_client_secret, config.vex_tm_api_key, config.vex_tm_base_url]):
+        return jsonify({"status": "ok", "teams": [], "match": None, "message": "TM API not configured"})
+    
+    try:
+        from modules.tm_manager.api_client import VexTmApiClient
+        api_client = VexTmApiClient(
+            config.vex_tm_client_id,
+            config.vex_tm_client_secret,
+            config.vex_tm_api_key,
+            config.vex_tm_base_url
+        )
+        
+        # Check if there's a field state with match assignment
+        field_file = os.path.join(FIELDS_DIR, f"field{field_id}.json")
+        match_info = None
+        
+        if os.path.exists(field_file):
+            field_state_data = _read_json(field_file, {})
+            match_id = field_state_data.get('match_id')
+            
+            if match_id:
+                # Get full match schedule
+                schedule_file = os.path.join(STORAGE_PATH, 'schedule.json')
+                if os.path.exists(schedule_file):
+                    schedule_data = _read_json(schedule_file, {})
+                    
+                    # Find the match in the schedule
+                    for division in schedule_data.get('divisions', []):
+                        if division['id'] == match_id.get('division'):
+                            for match in division.get('matches', []):
+                                match_tuple = match.get('matchInfo', {}).get('matchTuple', {})
+                                if (match_tuple.get('match') == match_id.get('match') and
+                                    match_tuple.get('round') == match_id.get('round', 'QUAL')):
+                                    match_info = match
+                                    break
+                            break
+        
+        # Get team data for the match
+        teams_data = []
+        if match_info:
+            alliances = match_info.get('matchInfo', {}).get('alliances', [])
+            division_id = match_info.get('matchInfo', {}).get('matchTuple', {}).get('division', 1)
+            
+            # Fetch teams list
+            teams_list_data = api_client.get(f"/api/teams/{division_id}")
+            teams_dict = {}
+            if teams_list_data and 'teams' in teams_list_data:
+                for team in teams_list_data['teams']:
+                    teams_dict[team['number']] = team
+            
+            # Fetch rankings
+            rankings_data = api_client.get(f"/api/rankings/{division_id}/QUAL")
+            rankings_dict = {}
+            if rankings_data and 'rankings' in rankings_data:
+                for ranking in rankings_data['rankings']:
+                    team_nums = [t['number'] for t in ranking.get('alliance', {}).get('teams', [])]
+                    for team_num in team_nums:
+                        rankings_dict[team_num] = ranking
+            
+            # Build combined team data
+            for alliance_idx, alliance in enumerate(alliances):
+                for team_info in alliance.get('teams', []):
+                    team_num = team_info['number']
+                    team_details = teams_dict.get(team_num, {})
+                    ranking = rankings_dict.get(team_num, {})
+                    
+                    teams_data.append({
+                        'number': team_num,
+                        'name': team_details.get('name', ''),
+                        'school': team_details.get('school', ''),
+                        'city': team_details.get('city', ''),
+                        'state': team_details.get('state', ''),
+                        'country': team_details.get('country', ''),
+                        'rank': ranking.get('rank'),
+                        'avgPoints': ranking.get('avgPoints'),
+                        'wins': ranking.get('wins'),
+                        'losses': ranking.get('losses'),
+                        'ties': ranking.get('ties'),
+                        'alliance': 'Red' if alliance_idx == 0 else 'Blue'
+                    })
+        
+        return jsonify({
+            "status": "ok",
+            "teams": teams_data,
+            "match": match_info,
+            "field_id": field_id
+        })
+        
+    except Exception as e:
+        logger.error(f"Error fetching team info: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/tm/send_command', methods=['POST'])
+@login_required(roles=["admin"])
+def api_tm_send_command():
+    """Send a command to TM via websocket"""
+    data = request.json
+    field_id = data.get('field_id')
+    command = data.get('command')
+    
+    if not field_id or not command:
+        return jsonify({"status": "error", "message": "field_id and command required"}), 400
+    
+    # Queue an event to send the command
+    event = Event(
+        type="tm_command",
+        field=field_id,
+        payload={"command": command, "params": data.get('params', {})}
+    )
+    
+    if event_queue and loop:
+        asyncio.run_coroutine_threadsafe(event_queue.put(event), loop)
+        return jsonify({"status": "ok"})
+    else:
+        return jsonify({"status": "error", "message": "Event queue not available"}), 500
+
+@app.route('/api/timer/<timer_id>/message', methods=['POST'])
+@login_required(roles=["admin"])
+def api_timer_send_message(timer_id):
+    """Send a message to be displayed on timer view"""
+    data = request.json
+    message = data.get('message', '')
+    
+    # Store message in timer state for viewers to fetch
+    timer_states = _read_json(TIMER_STATE_FILE, {})
+    if timer_id not in timer_states:
+        timer_states[timer_id] = {}
+    
+    timer_states[timer_id]['current_display_message'] = message
+    _atomic_write(TIMER_STATE_FILE, timer_states)
+    
+    return jsonify({"status": "ok"})
+
+@app.route('/api/timer/<timer_id>/presets', methods=['GET'])
+@login_required(roles=["admin"])
+def api_timer_get_presets(timer_id):
+    """Get saved message presets (global)"""
+    presets_file = os.path.join(STORAGE_PATH, 'message_presets.json')
+    presets = _read_json(presets_file, [])
+    return jsonify({"status": "ok", "presets": presets})
+
+@app.route('/api/timer/<timer_id>/presets', methods=['POST'])
+@login_required(roles=["admin"])
+def api_timer_save_preset(timer_id):
+    """Save a message preset (global)"""
+    data = request.json
+    name = data.get('name', '').strip()
+    message = data.get('message', '').strip()
+    
+    if not name or not message:
+        return jsonify({"status": "error", "message": "Name and message required"}), 400
+    
+    presets_file = os.path.join(STORAGE_PATH, 'message_presets.json')
+    presets = _read_json(presets_file, [])
+    
+    # Add new preset
+    presets.append({"name": name, "message": message})
+    _atomic_write(presets_file, presets)
+    
+    return jsonify({"status": "ok", "presets": presets})
+
+@app.route('/api/timer/<timer_id>/presets/<int:preset_index>', methods=['DELETE'])
+@login_required(roles=["admin"])
+def api_timer_delete_preset(timer_id, preset_index):
+    """Delete a message preset (global)"""
+    presets_file = os.path.join(STORAGE_PATH, 'message_presets.json')
+    presets = _read_json(presets_file, [])
+    
+    if 0 <= preset_index < len(presets):
+        presets.pop(preset_index)
+        _atomic_write(presets_file, presets)
+        return jsonify({"status": "ok", "presets": presets})
+    
+    return jsonify({"status": "error", "message": "Invalid preset index"}), 400
+
+@app.route('/api/spotify/playback', methods=['GET'])
+def api_spotify_playback():
+    """Get current Spotify playback state"""
+    from main import spotify_controller
+    
+    if not spotify_controller:
+        return jsonify({"status": "error", "message": "Spotify not configured"}), 503
+    
+    playback = spotify_controller.get_current_playback()
+    if playback:
+        return jsonify({"status": "ok", "playback": playback})
+    else:
+        return jsonify({"status": "ok", "playback": None, "message": "Nothing playing"})
+
+@app.route('/api/spotify/control', methods=['POST'])
+@login_required(roles=["admin", "av"])
+def api_spotify_control():
+    """Control Spotify playback"""
+    from main import spotify_controller, event_queue, loop
+    from models.actions import AudioAction
+    
+    if not spotify_controller:
+        return jsonify({"status": "error", "message": "Spotify not configured"}), 503
+    
+    data = request.json
+    command = data.get('command')
+    
+    if not command:
+        return jsonify({"status": "error", "message": "command required"}), 400
+    
+    # Create and execute action
+    try:
+        metadata = data.get('metadata', {})
+        action = AudioAction(command=command, metadata=metadata)
+        spotify_controller.execute_action(action)
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        logger.error(f"Error executing Spotify control: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.errorhandler(404)
 def not_found_error(error):

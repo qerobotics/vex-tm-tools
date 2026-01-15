@@ -423,6 +423,9 @@ function renderTimersList() {
                         ${isRunning ? '<span class="status-badge">Running</span>' : ''}
                     </div>
                     <div class="timer-card-actions">
+                        <a href="/timer_admin/${id}/expand" class="btn-icon" title="Expand Fullscreen">
+                            <i class="ri-fullscreen-line"></i>
+                        </a>
                         ${isRunning ? `
                             <button class="btn-icon danger" onclick="stopTimer('${id}')" title="Stop Timer">
                                 <i class="ri-stop-line"></i>

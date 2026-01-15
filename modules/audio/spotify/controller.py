@@ -144,6 +144,36 @@ class SpotifyController:
                 logger.error(f"An unexpected error occurred during Spotify action execution: {e}")
                 break # Don't retry on unexpected errors
 
+    def get_current_playback(self):
+        """Get current playback state from Spotify"""
+        if not self.sp:
+            return None
+        
+        try:
+            playback = self.sp.current_playback()
+            if not playback:
+                return None
+            
+            # Extract relevant information
+            item = playback.get('item', {})
+            if not item:
+                return None
+            
+            return {
+                'is_playing': playback.get('is_playing', False),
+                'progress_ms': playback.get('progress_ms', 0),
+                'duration_ms': item.get('duration_ms', 0),
+                'track_name': item.get('name', 'Unknown Track'),
+                'artist_name': ', '.join([artist['name'] for artist in item.get('artists', [])]),
+                'album_name': item.get('album', {}).get('name', 'Unknown Album'),
+                'album_art_url': item.get('album', {}).get('images', [{}])[0].get('url') if item.get('album', {}).get('images') else None,
+                'track_uri': item.get('uri', ''),
+                'volume': playback.get('device', {}).get('volume_percent', 50)
+            }
+        except Exception as e:
+            logger.error(f"Error getting current playback: {e}")
+            return None
+
 if __name__ == '__main__':
     # Example usage for testing
     # You need to set these environment variables

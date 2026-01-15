@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+import time
 
 @dataclass
 class TimerMilestone:
@@ -36,6 +37,9 @@ class Timer:
     milestones: List[TimerMilestone] = field(default_factory=list)
     field_id: Optional[str] = None  # optional field assignment for match data display
     created_at: Optional[str] = None
+    ready_states: Dict[str, bool] = field(default_factory=dict)  # Track which users pressed ready
+    auto_start_tm: bool = False  # Auto-start TM countdown at 3 seconds
+    match_number: Optional[str] = None  # Linked match number from schedule
     
     def __post_init__(self):
         if self.created_at is None:
@@ -52,7 +56,10 @@ class Timer:
             'duration': self.duration,
             'milestones': [m.to_dict() for m in self.milestones],
             'field_id': self.field_id,
-            'created_at': self.created_at
+            'created_at': self.created_at,
+            'ready_states': self.ready_states,
+            'auto_start_tm': self.auto_start_tm,
+            'match_number': self.match_number
         }
     
     @classmethod
@@ -64,7 +71,10 @@ class Timer:
             duration=data['duration'],
             milestones=milestones,
             field_id=data.get('field_id'),
-            created_at=data.get('created_at')
+            created_at=data.get('created_at'),
+            ready_states=data.get('ready_states', {}),
+            auto_start_tm=data.get('auto_start_tm', False),
+            match_number=data.get('match_number')
         )
 
 @dataclass
@@ -91,12 +101,13 @@ class TimerState:
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'TimerState':
+        current_time = time.time()
         return cls(
-            timer_id=data['timer_id'],
-            start_timestamp=data['start_timestamp'],
-            end_timestamp=data['end_timestamp'],
-            is_running=data['is_running'],
-            duration=data['duration'],
+            timer_id=data.get('timer_id', 'unknown'),
+            start_timestamp=data.get('start_timestamp', current_time),
+            end_timestamp=data.get('end_timestamp', current_time),
+            is_running=data.get('is_running', False),
+            duration=data.get('duration', 0),
             paused_at=data.get('paused_at'),
             last_milestone_triggered=data.get('last_milestone_triggered')
         )
