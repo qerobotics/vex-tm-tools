@@ -480,22 +480,32 @@ body.full-width-controls-page section {
     }
     
     .room-selection {
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
         margin: 0.5rem 0;
     }
     
     .room-selection p {
-        margin: 0;
+        margin: 0 0 0.5rem 0;
         font-weight: bold;
     }
     
     .room-selection label {
-        display: block;
-        background: var(--color-background-primary);
-        padding: 0.5rem;
+        display: inline-flex;
+        align-items: center;
+        background: var(--bg-2);
+        padding: 0.5rem 0.75rem;
         border-radius: 4px;
+        margin-right: 0.5rem;
+        margin-bottom: 0.5rem;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+    
+    .room-selection label:hover {
+        background: rgba(122, 162, 247, 0.1);
+    }
+    
+    .room-selection input[type="checkbox"] {
+        margin-right: 0.5rem;
     }
 
     .active-popups {
