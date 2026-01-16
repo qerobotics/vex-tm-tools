@@ -48,7 +48,7 @@ class ScheduleFetcher:
         try:
             with open(temp_path, 'w') as f:
                 f.write(data)
-            os.rename(temp_path, file_path)
+            os.replace(temp_path, file_path)
         except Exception as e:
             logger.error(f"Failed to atomically write to {file_path}: {e}")
             if os.path.exists(temp_path):

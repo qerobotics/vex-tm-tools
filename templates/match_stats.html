@@ -21,8 +21,9 @@
   .match-stats-container {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 1.5rem;
-    max-width: 100%;
+    gap: 2rem;
+    max-width: 90%;
+    width: 90%;
     margin: 0 auto;
     height: calc(100vh - 120px);
   }
@@ -92,7 +93,7 @@
     border: 1px solid rgba(255,255,255,0.04);
     border-radius: 8px;
     padding: 0.75rem;
-    margin-bottom: 0.75rem;
+    margin-bottom: 1rem;
     cursor: pointer;
     transition: all 0.2s;
   }
@@ -184,7 +185,7 @@
   .match-details-panel {
     display: flex;
     flex-direction: column;
-    gap: 1.5rem;
+    gap: 2rem;
   }
 
   .current-match-banner {
@@ -205,7 +206,7 @@
   .team-cards-container {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 1.5rem;
+    gap: 2rem;
   }
 
   .team-card {
@@ -420,6 +421,9 @@ async function fetchScheduleData() {
         }
       }
       
+      // Track if current match changed
+      const previousCurrentMatchIndex = currentMatchIndex;
+      
       // Find current match index
       if (data.current_match) {
         const currentIdx = allMatches.findIndex(m => {
@@ -431,7 +435,10 @@ async function fetchScheduleData() {
         });
         if (currentIdx >= 0) {
           currentMatchIndex = currentIdx;
-          selectedMatchIndex = currentIdx;
+          // Auto-select the current match when it becomes active
+          if (previousCurrentMatchIndex !== currentIdx) {
+            selectedMatchIndex = currentIdx;
+          }
         }
       }
       
@@ -701,10 +708,10 @@ function toggleCompletedMatches() {
   renderMatchList();
 }
 
-// Auto-refresh every 30 seconds
+// Auto-refresh every 10 seconds to detect match changes quickly
 setInterval(() => {
   fetchScheduleData();
-}, 30000);
+}, 10000);
 
 // Initial load
 fetchScheduleData();

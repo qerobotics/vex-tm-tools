@@ -138,7 +138,7 @@ class EventProcessor:
         try:
             with os.fdopen(temp_fd, 'w') as temp_f:
                 temp_f.write(data)
-            os.rename(temp_path, file_path)
+            os.replace(temp_path, file_path)
         except Exception as e:
             if os.path.exists(temp_path):
                 os.remove(temp_path)

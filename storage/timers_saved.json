@@ -9,5 +9,16 @@
         "ready_states": {},
         "auto_start_tm": true,
         "match_number": null
+    },
+    "bc4a5293-63b0-4d91-ace0-c1e4b5ca6a57": {
+        "timer_id": "bc4a5293-63b0-4d91-ace0-c1e4b5ca6a57",
+        "name": "3",
+        "duration": 20,
+        "milestones": [],
+        "field_id": "1",
+        "created_at": "2026-01-15T22:58:23.664427",
+        "ready_states": {},
+        "auto_start_tm": false,
+        "match_number": null
     }
 }

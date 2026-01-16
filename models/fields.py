@@ -5,8 +5,9 @@ class FieldState(BaseModel):
     def __init__(self, field_id, state, match_name=None, match_id=None, last_updated=None):
         self.field_id = field_id
         self.state = state  # e.g., "queued", "countdown", "active", "finish", "standby"
+        self.match_id = match_id  # Store the match_id directly
         
-        # Handle legacy match_id field
+        # Handle legacy match_id field for display
         if match_id and not match_name:
             if isinstance(match_id, dict):
                 # Assuming match_id is an object like {"round": "QUAL", "match": 21}
