@@ -21,6 +21,18 @@
         ],
         "matchStopped": [
             {
+                "match_name": "*",
+                "fields": {
+                    "all": [
+                        {
+                            "type": "audio",
+                            "command": "pause",
+                            "delay": 15
+                        }
+                    ]
+                }
+            },
+            {
                 "match_name": "Q*",
                 "fields": {
                     "2": [

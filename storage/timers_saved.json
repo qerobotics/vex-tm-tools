@@ -4,12 +4,13 @@
         "name": "2",
         "duration": 15,
         "milestones": [],
-        "action_list_id": "default",
+        "action_list_id": "f-1",
         "field_id": "1",
-        "created_at": "2026-01-16T09:36:52.670624",
+        "created_at": "2026-01-16T21:03:34.162842",
         "ready_states": {},
         "auto_start_tm": false,
-        "match_number": null
+        "match_number": null,
+        "auto_detect_action_list": true
     },
     "bc4a5293-63b0-4d91-ace0-c1e4b5ca6a57": {
         "timer_id": "bc4a5293-63b0-4d91-ace0-c1e4b5ca6a57",
