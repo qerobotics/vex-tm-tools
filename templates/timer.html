@@ -691,11 +691,11 @@ const SYNC_INTERVAL = 500; // Resync every 500ms
 let readyPressed = false;
 
 function formatTime(seconds) {
-    const absSeconds = Math.abs(seconds);
-    const mins = Math.floor(absSeconds / 60);
-    const secs = Math.floor(absSeconds % 60);
-    const sign = seconds < 0 ? '+' : '';
-    return sign + String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0');
+    // Never show negative time - clamp at 00:00
+    const clampedSeconds = Math.max(0, seconds);
+    const mins = Math.floor(clampedSeconds / 60);
+    const secs = Math.floor(clampedSeconds % 60);
+    return String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0');
 }
 
 function markReady() {
@@ -773,25 +773,24 @@ function updateDisplay() {
     const remaining = Math.floor(currentEndTimestamp - now);
     const display = document.getElementById('timer-display');
     
-    // Update display
-    display.textContent = formatTime(remaining);
-    
-    // Stop timer when it reaches 00:00
+    // Stop timer when it reaches 00:00 - don't show negative times
     if (remaining <= 0) {
+        display.textContent = '00:00';
+        display.classList.remove('warning', 'danger', 'overtime');
         isRunning = false;
         if (animationFrameId) {
             cancelAnimationFrame(animationFrameId);
             animationFrameId = null;
         }
-        display.classList.remove('warning', 'danger', 'overtime');
         return;
     }
     
+    // Update display with remaining time
+    display.textContent = formatTime(remaining);
+    
     // Update styling based on time
     display.classList.remove('warning', 'danger', 'overtime');
-    if (remaining < 0) {
-        display.classList.add('overtime');
-    } else if (remaining <= 10) {
+    if (remaining <= 10) {
         display.classList.add('danger');
     } else if (remaining <= 30) {
         display.classList.add('warning');
@@ -847,14 +846,10 @@ async function syncTimerState() {
             }
             
             const display = document.getElementById('timer-display');
-            display.textContent = formatTime(data.remaining);
-            display.classList.remove('warning', 'danger');
-            
-            if (data.remaining < 0) {
-                display.classList.add('overtime');
-            } else {
-                display.classList.remove('overtime');
-            }
+            // Clamp at 00:00 - never show negative
+            const displayTime = Math.max(0, data.remaining);
+            display.textContent = formatTime(displayTime);
+            display.classList.remove('warning', 'danger', 'overtime');
         }
         
         // Update message

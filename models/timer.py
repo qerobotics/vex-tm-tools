@@ -4,6 +4,39 @@ from datetime import datetime
 import time
 
 @dataclass
+class ActionList:
+    """Represents a reusable list of timed actions"""
+    id: str
+    name: str
+    description: Optional[str] = None
+    milestones: List['TimerMilestone'] = field(default_factory=list)
+    created_at: Optional[str] = None
+    
+    def __post_init__(self):
+        if self.created_at is None:
+            self.created_at = datetime.utcnow().isoformat()
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'milestones': [m.to_dict() for m in self.milestones],
+            'created_at': self.created_at
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'ActionList':
+        milestones = [TimerMilestone.from_dict(m) for m in data.get('milestones', [])]
+        return cls(
+            id=data['id'],
+            name=data['name'],
+            description=data.get('description'),
+            milestones=milestones,
+            created_at=data.get('created_at')
+        )
+
+@dataclass
 class TimerMilestone:
     """Represents an action or message triggered at a specific countdown time"""
     time_remaining: int  # seconds remaining when this milestone triggers

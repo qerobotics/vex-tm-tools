@@ -103,6 +103,24 @@ class TimerTickWorker:
                 
                 timer_config = Timer.from_dict(timers_saved[timer_id])
                 
+                # Get milestones from action list if specified, otherwise use timer's own milestones
+                milestones = timer_config.milestones
+                if timer_config.action_list_id:
+                    # Load action lists
+                    action_lists_file = os.path.join('storage', 'action_lists.json')
+                    try:
+                        with open(action_lists_file, 'r') as f:
+                            action_lists = json.load(f)
+                        
+                        if timer_config.action_list_id in action_lists:
+                            action_list_data = action_lists[timer_config.action_list_id]
+                            from models.timer import ActionList
+                            action_list = ActionList.from_dict(action_list_data)
+                            milestones = action_list.milestones
+                            logger.debug(f"Timer {timer_id} using action list '{action_list.name}' with {len(milestones)} milestones")
+                    except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+                        logger.warning(f"Could not load action list for timer {timer_id}: {e}")
+                
                 # Auto-start TM countdown at 3 seconds
                 if (timer_config.auto_start_tm and 
                     timer_config.field_id and 
@@ -129,7 +147,7 @@ class TimerTickWorker:
                 if timer_id not in self.triggered_milestones:
                     self.triggered_milestones[timer_id] = set()
                 
-                for milestone in timer_config.milestones:
+                for milestone in milestones:
                     milestone_key = f"{milestone.time_remaining}_{milestone.action_type}"
                     
                     # Check if this milestone should trigger

@@ -1,0 +1,15 @@
+{
+    "default": {
+        "id": "default",
+        "name": "Default Match Actions",
+        "description": "Standard actions for a match timer",
+        "milestones": [
+            {
+                "time_remaining": 3,
+                "action_type": "message",
+                "action_payload": {},
+                "message": "Match starting in 3 seconds!"
+            }
+        ]
+    }
+}

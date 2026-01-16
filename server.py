@@ -15,7 +15,7 @@ import traceback
 from models.fields import FieldState
 from models.config import Config
 from models.events import Event
-from models.timer import Timer, TimerMilestone, TimerState
+from models.timer import Timer, TimerMilestone, TimerState, ActionList
 from userManager import UserManager
 from modules.tm_manager.api_client import VexTmApiClient
 
@@ -120,6 +120,7 @@ POPUPS_FILE = os.path.join(STORAGE_PATH, 'popups.json')
 PRESETS_FILE = os.path.join(STORAGE_PATH, 'presets.json')
 TIMERS_SAVED_FILE = os.path.join(STORAGE_PATH, 'timers_saved.json')
 TIMER_STATE_FILE = os.path.join(STORAGE_PATH, 'timer_state.json')
+ACTION_LISTS_FILE = os.path.join(STORAGE_PATH, 'action_lists.json')
 
 def _atomic_write(file_path, data):
     try:
@@ -1367,6 +1368,7 @@ def api_timers_create():
             name=name,
             duration=data['duration'],
             milestones=milestones,
+            action_list_id=data.get('action_list_id'),
             field_id=data.get('field_id'),
             ready_states=data.get('ready_states', {}),
             auto_start_tm=data.get('auto_start_tm', False),
@@ -1420,6 +1422,7 @@ def api_timer_update(timer_id):
             name=name,
             duration=data['duration'],
             milestones=milestones,
+            action_list_id=data.get('action_list_id'),
             field_id=data.get('field_id'),
             created_at=data.get('created_at'),
             ready_states=data.get('ready_states', {}),
@@ -1563,7 +1566,15 @@ def api_timer_state(timer_id):
         # Get current message if any
         current_message = None
         if is_running and remaining >= 0:
-            for milestone in timer_data.get('milestones', []):
+            # Get milestones from action list if specified, otherwise use timer's own milestones
+            milestones = timer_data.get('milestones', [])
+            action_list_id = timer_data.get('action_list_id')
+            if action_list_id:
+                action_lists = _read_json(ACTION_LISTS_FILE, {})
+                if action_list_id in action_lists:
+                    milestones = action_lists[action_list_id].get('milestones', [])
+            
+            for milestone in milestones:
                 if milestone.get('message') and remaining <= milestone['time_remaining']:
                     current_message = milestone['message']
                     break
@@ -1912,6 +1923,120 @@ def api_timer_templates_apply(template_id, timer_id):
     _atomic_write(timer_file, timers)
     
     return jsonify({"status": "ok", "timer": timers[timer_id]})
+
+# Action Lists API
+@app.route('/api/action_lists', methods=['GET'])
+@login_required(roles=["admin"])
+def api_action_lists_get():
+    """Get all action lists"""
+    action_lists = _read_json(ACTION_LISTS_FILE, {})
+    return jsonify({"status": "ok", "action_lists": action_lists})
+
+@app.route('/api/action_lists', methods=['POST'])
+@login_required(roles=["admin"])
+def api_action_lists_create():
+    """Create a new action list"""
+    try:
+        data = request.json
+        action_list_id = data.get('id')
+        if not action_list_id:
+            action_list_id = str(uuid.uuid4())
+        
+        name = data.get('name')
+        if not name:
+            name = "Untitled Action List"
+        
+        # Parse milestones
+        milestones = []
+        for m_data in data.get('milestones', []):
+            milestone = TimerMilestone(
+                time_remaining=m_data['time_remaining'],
+                action_type=m_data['action_type'],
+                action_payload=m_data['action_payload'],
+                message=m_data.get('message')
+            )
+            milestones.append(milestone)
+        
+        # Create action list object
+        action_list = ActionList(
+            id=action_list_id,
+            name=name,
+            description=data.get('description'),
+            milestones=milestones
+        )
+        
+        # Save to storage
+        action_lists = _read_json(ACTION_LISTS_FILE, {})
+        action_lists[action_list_id] = action_list.to_dict()
+        _atomic_write(ACTION_LISTS_FILE, action_lists)
+        
+        return jsonify({"status": "ok", "action_list_id": action_list_id, "action_list": action_list.to_dict()})
+    except Exception as e:
+        logger.error(f"Error creating action list: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": str(e)}), 400
+
+@app.route('/api/action_lists/<action_list_id>', methods=['GET'])
+@login_required(roles=["admin"])
+def api_action_list_get(action_list_id):
+    """Get a specific action list"""
+    action_lists = _read_json(ACTION_LISTS_FILE, {})
+    if action_list_id not in action_lists:
+        return jsonify({"status": "error", "message": "Action list not found"}), 404
+    return jsonify({"status": "ok", "action_list": action_lists[action_list_id]})
+
+@app.route('/api/action_lists/<action_list_id>', methods=['PUT'])
+@login_required(roles=["admin"])
+def api_action_list_update(action_list_id):
+    """Update an action list"""
+    try:
+        data = request.json
+        
+        name = data.get('name')
+        if not name:
+            name = "Untitled Action List"
+        
+        # Parse milestones
+        milestones = []
+        for m_data in data.get('milestones', []):
+            milestone = TimerMilestone(
+                time_remaining=m_data['time_remaining'],
+                action_type=m_data['action_type'],
+                action_payload=m_data['action_payload'],
+                message=m_data.get('message')
+            )
+            milestones.append(milestone)
+        
+        # Create action list object
+        action_list = ActionList(
+            id=action_list_id,
+            name=name,
+            description=data.get('description'),
+            milestones=milestones,
+            created_at=data.get('created_at')
+        )
+        
+        # Save to storage
+        action_lists = _read_json(ACTION_LISTS_FILE, {})
+        action_lists[action_list_id] = action_list.to_dict()
+        _atomic_write(ACTION_LISTS_FILE, action_lists)
+        
+        return jsonify({"status": "ok", "action_list": action_list.to_dict()})
+    except Exception as e:
+        logger.error(f"Error updating action list: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": str(e)}), 400
+
+@app.route('/api/action_lists/<action_list_id>', methods=['DELETE'])
+@login_required(roles=["admin"])
+def api_action_list_delete(action_list_id):
+    """Delete an action list"""
+    action_lists = _read_json(ACTION_LISTS_FILE, {})
+    if action_list_id not in action_lists:
+        return jsonify({"status": "error", "message": "Action list not found"}), 404
+    
+    del action_lists[action_list_id]
+    _atomic_write(ACTION_LISTS_FILE, action_lists)
+    
+    return jsonify({"status": "ok"})
 
 # F2: Match History
 @app.route('/api/match_history', methods=['GET'])
