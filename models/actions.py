@@ -22,6 +22,7 @@ class AudioAction(Action):
 
 @dataclass
 class VideoAction(Action):
+    command: str = "switch"
     camera_id: Optional[str] = None
     input_id: Optional[str] = None
     type: str = "video"

@@ -33,6 +33,10 @@ class AtemController:
             return
 
         camera_id = action.camera_id
+        if not camera_id:
+            logger.error("No camera_id provided for ATEM action")
+            return
+            
         logger.info(f"Executing ATEM action: Switch to camera {camera_id}")
 
         try:
@@ -69,13 +73,13 @@ if __name__ == '__main__':
             print("ATEM controller initialized.")
             
             # Example: Switch to camera 1 (Program Input 1)
-            action1 = VideoAction(camera_id=1)
+            action1 = VideoAction(command="switch", camera_id="1")
             atem_controller.execute_action(action1)
             
             time.sleep(3)
             
             # Example: Switch to camera 2 (Program Input 2)
-            action2 = VideoAction(camera_id=2)
+            action2 = VideoAction(command="switch", camera_id="2")
             atem_controller.execute_action(action2)
 
             atem_controller.disconnect()
