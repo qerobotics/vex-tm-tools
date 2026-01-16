@@ -609,11 +609,10 @@ class EventProcessor:
     
     async def _handle_tm_command(self, event):
         """Handle TM command events - send commands via websocket"""
-        field_id = event.field
         command = event.payload.get("command")
         params = event.payload.get("params", {})
         
-        if not field_id or not command:
+        if not command:
             logger.error(f"Invalid tm_command payload: {event.payload}")
             return
         
@@ -621,7 +620,7 @@ class EventProcessor:
         command_data = {"cmd": command}
         command_data.update(params)  # Add any additional parameters
         
-        logger.info(f"TM Command for field {field_id}: {command} with params {params}")
+        logger.info(f"TM Command: {command} with params {params}")
         
         # Send via websocket if connector is available
         if self.tm_connector:
