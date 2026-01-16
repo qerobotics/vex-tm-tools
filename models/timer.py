@@ -34,7 +34,8 @@ class Timer:
     timer_id: str
     name: str
     duration: int  # total duration in seconds
-    milestones: List[TimerMilestone] = field(default_factory=list)
+    milestones: List[TimerMilestone] = field(default_factory=list)  # Legacy support
+    action_list_id: Optional[str] = None  # Reference to action list
     field_id: Optional[str] = None  # optional field assignment for match data display
     created_at: Optional[str] = None
     ready_states: Dict[str, bool] = field(default_factory=dict)  # Track which users pressed ready
@@ -55,6 +56,7 @@ class Timer:
             'name': self.name,
             'duration': self.duration,
             'milestones': [m.to_dict() for m in self.milestones],
+            'action_list_id': self.action_list_id,
             'field_id': self.field_id,
             'created_at': self.created_at,
             'ready_states': self.ready_states,
@@ -70,6 +72,7 @@ class Timer:
             name=data['name'],
             duration=data['duration'],
             milestones=milestones,
+            action_list_id=data.get('action_list_id'),
             field_id=data.get('field_id'),
             created_at=data.get('created_at'),
             ready_states=data.get('ready_states', {}),

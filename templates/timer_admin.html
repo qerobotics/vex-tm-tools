@@ -5,17 +5,45 @@
 {% block content %}
 <section>
     <h1><i class="ri-timer-line"></i> Timer Administration</h1>
-    <p class="muted">Create and manage countdown timers with milestone actions</p>
+    <p class="muted">Create and manage countdown timers with action lists</p>
 
-    <div class="card">
-        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
-            <h3>Saved Timers</h3>
-            <button class="btn-primary" onclick="showCreateModal()">
-                <i class="ri-add-line"></i> Create New Timer
-            </button>
+    <!-- Navigation Tabs -->
+    <div class="tabs">
+        <button class="tab-btn active" onclick="showTab('timers')">
+            <i class="ri-timer-line"></i> Timers
+        </button>
+        <button class="tab-btn" onclick="showTab('action-lists')">
+            <i class="ri-list-check"></i> Action Lists
+        </button>
+    </div>
+
+    <!-- Timers Tab -->
+    <div id="timers-tab" class="tab-content active">
+        <div class="card">
+            <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                <h3>Saved Timers</h3>
+                <button class="btn-primary" onclick="showCreateModal()">
+                    <i class="ri-add-line"></i> Create New Timer
+                </button>
+            </div>
+            <div class="card-body">
+                <div id="timers-list"></div>
+            </div>
         </div>
-        <div class="card-body">
-            <div id="timers-list"></div>
+    </div>
+
+    <!-- Action Lists Tab -->
+    <div id="action-lists-tab" class="tab-content">
+        <div class="card">
+            <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                <h3>Action Lists</h3>
+                <button class="btn-primary" onclick="showActionListModal()">
+                    <i class="ri-add-line"></i> Create Action List
+                </button>
+            </div>
+            <div class="card-body">
+                <div id="action-lists-list"></div>
+            </div>
         </div>
     </div>
 </section>
@@ -56,6 +84,45 @@
                 </div>
 
                 <div class="form-group">
+                    <label for="timer-action-list">Action List (Optional)</label>
+                    <select id="timer-action-list" name="action_list_id">
+                        <option value="">None - No Actions</option>
+                        <!-- Action lists will be populated here -->
+                    </select>
+                    <small class="muted">Select an action list to run during this timer</small>
+                </div>
+
+                <div class="form-actions" style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 2rem;">
+                    <button type="button" class="btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn-primary">Save Timer</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Action List Modal -->
+<div id="action-list-modal" class="modal">
+    <div class="modal-content" style="max-width: 900px;">
+        <div class="modal-header">
+            <h2 id="action-list-modal-title">Create Action List</h2>
+            <button class="close-btn" onclick="closeActionListModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="action-list-form">
+                <input type="hidden" id="action-list-id" name="id">
+                
+                <div class="form-group">
+                    <label for="action-list-name">Action List Name *</label>
+                    <input type="text" id="action-list-name" name="name" required placeholder="e.g., Standard Match Actions">
+                </div>
+
+                <div class="form-group">
+                    <label for="action-list-description">Description (Optional)</label>
+                    <input type="text" id="action-list-description" name="description" placeholder="Brief description of this action list">
+                </div>
+
+                <div class="form-group">
                     <label>Milestones</label>
                     <p class="muted" style="margin-bottom: 1rem;">Configure actions and messages at specific countdown times</p>
                     
@@ -76,6 +143,45 @@
 </div>
 
 <style>
+.tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    border-bottom: 2px solid rgba(255,255,255,0.1);
+}
+
+.tab-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    padding: 1rem 1.5rem;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1rem;
+}
+
+.tab-btn:hover {
+    color: var(--fg);
+}
+
+.tab-btn.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
 .modal {
     display: none;
     position: fixed;

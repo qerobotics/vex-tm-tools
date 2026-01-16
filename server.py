@@ -1752,16 +1752,15 @@ def api_timer_team_info(timer_id):
 def api_tm_send_command():
     """Send a command to TM via websocket"""
     data = request.json
-    field_id = data.get('field_id')
     command = data.get('command')
     
-    if not field_id or not command:
-        return jsonify({"status": "error", "message": "field_id and command required"}), 400
+    if not command:
+        return jsonify({"status": "error", "message": "command required"}), 400
     
     # Queue an event to send the command
     event = Event(
         type="tm_command",
-        field=field_id,
+        field=None,
         payload={"command": command, "params": data.get('params', {})}
     )
     

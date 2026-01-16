@@ -353,7 +353,6 @@ async function sendCommand(command) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                field_id: selectedFieldId || null,
                 command: command
             })
         });
@@ -377,7 +376,6 @@ async function sendAudienceDisplay(display) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                field_id: selectedFieldId || null,
                 command: 'setAudienceDisplay',
                 params: { display: display }
             })
@@ -418,7 +416,6 @@ async function queueSkillsMatch() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                field_id: selectedFieldId || null,
                 command: 'queueSkills',
                 params: { skillsID: parseInt(skillsId) }
             })
