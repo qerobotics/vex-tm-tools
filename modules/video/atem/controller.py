@@ -35,13 +35,31 @@ class AtemController:
 
     def execute_action(self, action):
         logger.debug(f"ATEM execute_action called with action: {action}")
-        logger.debug(f"Action type: {type(action)}, camera_id: {getattr(action, 'camera_id', None)}")
+        logger.debug(f"Action type: {type(action)}, camera_id: {getattr(action, 'camera_id', None)}, command: {getattr(action, 'command', None)}")
         
         if not self._ensure_connection():
             logger.error("Cannot execute ATEM action, no connection.")
             logger.debug(f"ATEM connection failed, connected={self.atem.connected}")
             return
 
+        command = action.command
+        logger.debug(f"Processing ATEM command: {command}")
+        
+        # Handle fade to black
+        if command == "fade_to_black":
+            logger.info("Executing ATEM fade to black")
+            logger.debug("Triggering fade to black on ME1")
+            try:
+                # Perform fade to black on ME1 (index 0)
+                self.atem.performFadeToBlackME(0)
+                logger.info("Fade to black triggered on ME1")
+                logger.debug("ATEM performFadeToBlackME(0) command sent successfully")
+            except Exception as e:
+                logger.error(f"Error triggering fade to black: {e}")
+                logger.debug(f"Exception details during fade to black", exc_info=True)
+            return
+
+        # Handle program input change (camera switching)
         camera_id = action.camera_id
         if not camera_id:
             logger.error("No camera_id provided for ATEM action")
