@@ -425,7 +425,7 @@
             </div>
         </div>
       </li>
-      {% if 'user' in session %}
+      {% if 'user' in session and session.user.role in ['emcee', 'av', 'admin', 'owner'] %}
       <div class="dropdown">
           <a href="#" class="dropdown-toggle" title="Tools" style="font-size: 1.5rem; padding-top: 14px; padding-bottom: 14px;"><i class="ri-tools-line"></i></a>
           <div class="dropdown-content">
