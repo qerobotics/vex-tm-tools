@@ -1291,14 +1291,12 @@ def timer_view(timer_id):
     return render_template('timer.html', timer_id=timer_id)
 
 @app.route('/api/timers', methods=['GET'])
-@login_required(roles=["emcee", "av", "admin", "owner"])
 def api_timers_list():
-    """Get all saved timers"""
+    """Get all saved timers - public endpoint for timers overview"""
     timers = _read_json(TIMERS_SAVED_FILE, {})
     return jsonify(timers)
 
 @app.route('/api/timers/status', methods=['GET'])
-@login_required(roles=["emcee", "av", "admin", "owner"])
 def api_timers_status():
     """Get status of all timers"""
     timers = _read_json(TIMERS_SAVED_FILE, {})
