@@ -128,7 +128,7 @@ class TimerTickWorker:
                 # Auto-start TM countdown at 3 seconds
                 if (timer_config.auto_start_tm and 
                     timer_config.field_id and 
-                    remaining <= 3 and remaining > 0 and
+                    remaining <= 4 and remaining > 0 and
                     timer_id not in self.tm_start_triggered):
                     
                     logger.info(f"Auto-starting TM countdown for timer {timer_id} at {remaining:.1f}s remaining (field {timer_config.field_id})")
