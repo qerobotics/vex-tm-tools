@@ -9,10 +9,9 @@ services:
     
   vex-tm-manager-tools:
     container_name: vex-tm-manager-tools
-#    build:
-#      context: .
-#      dockerfile: Dockerfile
-    image: ghcr.io/vmd1/vex-tm-tools-priv
+    build:
+      context: .
+      dockerfile: Dockerfile
     networks:
       cf:
         ipv4_address: 10.65.1.20
