@@ -13,6 +13,7 @@ class Action(BaseModel):
     metadata: Optional[dict] = None
     type: Optional[str] = None
     priority: int = 0
+    delay: Optional[float] = None  # Delay in seconds before executing the action
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 

@@ -318,6 +318,13 @@ class EventProcessor:
             logger.debug(f"Action data without type: {action_data}")
             return
 
+        # Handle delay if specified
+        delay = action_data.get("delay")
+        if delay and delay > 0:
+            logger.info(f"Action has delay of {delay}s, scheduling for later execution")
+            asyncio.create_task(self._execute_action_delayed(action_data, event, delay))
+            return
+
         logger.debug(f"Executing action: {action_data}")
 
         if action_type == "audio":
@@ -384,6 +391,15 @@ class EventProcessor:
         else:
             logger.warning(f"Unknown action type: {action_type}")
 
+    async def _execute_action_delayed(self, action_data, event, delay):
+        """Execute an action after a specified delay in seconds."""
+        logger.info(f"Waiting {delay}s before executing action: {action_data.get('type')}")
+        await asyncio.sleep(delay)
+        logger.info(f"Delay complete, executing action: {action_data.get('type')}")
+        # Create a copy without the delay field to avoid infinite recursion
+        action_data_copy = action_data.copy()
+        action_data_copy.pop('delay', None)
+        await self._execute_action(action_data_copy, event)
 
     async def _handle_special_events(self, event):
         if event.type == "match_scheduled":
@@ -629,28 +645,25 @@ class EventProcessor:
     
     async def _handle_tm_command(self, event):
         """Handle TM command events - send commands via websocket"""
-        command = event.payload.get("command")
-        params = event.payload.get("params", {})
+        # The payload should already be in the correct format with 'cmd' field
+        # as per VEX TM API specification
+        command_data = event.payload
         
-        if not command:
-            logger.error(f"Invalid tm_command payload: {event.payload}")
+        if not command_data.get("cmd"):
+            logger.error(f"Invalid tm_command payload (missing 'cmd' field): {event.payload}")
             return
         
-        # Build command data according to VEX TM API spec
-        command_data = {"cmd": command}
-        command_data.update(params)  # Add any additional parameters
-        
-        logger.info(f"TM Command: {command} with params {params}")
+        logger.info(f"TM Command: {command_data}")
         
         # Send via websocket if connector is available
         if self.tm_connector:
             success = await self.tm_connector.send_command(command_data)
             if success:
-                logger.info(f"Successfully sent command '{command}' via websocket")
+                logger.info(f"Successfully sent command '{command_data.get('cmd')}' via websocket")
             else:
-                logger.warning(f"Failed to send command '{command}' via websocket")
+                logger.warning(f"Failed to send command '{command_data.get('cmd')}' via websocket")
         else:
-            logger.warning(f"TM connector not available, command '{command}' not sent (DISABLE_VEX_TM may be set)")
+            logger.warning(f"TM connector not available, command '{command_data.get('cmd')}' not sent (DISABLE_VEX_TM may be set)")
 
 
 if __name__ == '__main__':

@@ -47,8 +47,12 @@ class TimerTickWorker:
         self.storage_path = storage_path
         self.timer_state_file = os.path.join(storage_path, 'timer_state.json')
         self.timers_saved_file = os.path.join(storage_path, 'timers_saved.json')
+        self.action_lists_file = os.path.join(storage_path, 'action_lists.json')
         self.triggered_milestones = {}  # Track which milestones have been triggered per timer
         self.tm_start_triggered = {}  # Track if auto-start TM has been triggered per timer
+        self.schedule_cache = None  # Cache for schedule data
+        self.schedule_cache_time = 0  # Timestamp of last schedule fetch
+        self.schedule_cache_ttl = 10  # Cache schedule for 10 seconds
         
     def _read_json(self, file_path, default=None):
         """Read JSON file safely"""
@@ -60,6 +64,118 @@ class TimerTickWorker:
         except (FileNotFoundError, json.JSONDecodeError) as e:
             logger.warning(f"Could not read {file_path}: {e}")
             return default or {}
+    
+    def _get_current_match_from_schedule(self):
+        """Get current match from TM schedule with caching"""
+        current_time = time.time()
+        
+        # Use cached schedule if still valid
+        if self.schedule_cache and (current_time - self.schedule_cache_time) < self.schedule_cache_ttl:
+            return self.schedule_cache.get('current_match')
+        
+        # Fetch fresh schedule data
+        try:
+            from models.config import Config
+            config_file = os.path.join(self.storage_path, 'config.json')
+            with open(config_file, 'r') as f:
+                config = Config.from_json(f.read())
+            
+            vex_tm_api = config.vex_tm_api or {}
+            if not vex_tm_api.get('enabled', False):
+                return None
+            
+            from modules.tm_manager.api_client import VexTmApiClient
+            api_client = VexTmApiClient(
+                vex_tm_api.get('client_id'),
+                vex_tm_api.get('client_secret'),
+                vex_tm_api.get('api_key'),
+                vex_tm_api.get('base_url', 'http://localhost:8080')
+            )
+            
+            field_set_id = vex_tm_api.get('field_set_id', 1)
+            schedule_data = api_client.get(f"/api/fieldsets/{field_set_id}/matches")
+            
+            if not schedule_data:
+                return None
+            
+            # Find current match from field control states
+            fields_data = api_client.get(f"/api/fieldsets/{field_set_id}/fields")
+            if not fields_data or 'fields' not in fields_data:
+                return None
+            
+            current_match = None
+            for field in fields_data['fields']:
+                match_name = field.get('currentMatch')
+                if match_name:
+                    # Parse match name and find in schedule
+                    current_match = self._find_match_tuple_by_name(schedule_data, match_name)
+                    if current_match:
+                        break
+            
+            # Cache the result
+            self.schedule_cache = {'current_match': current_match}
+            self.schedule_cache_time = current_time
+            
+            return current_match
+            
+        except Exception as e:
+            logger.debug(f"Could not fetch current match from schedule: {e}")
+            return None
+    
+    def _find_match_tuple_by_name(self, schedule_data, match_name):
+        """Find a matchTuple in the schedule by its display name (e.g., 'Q1', 'F2')"""
+        if not schedule_data or not schedule_data.get('divisions'):
+            return None
+        
+        if len(match_name) < 2:
+            return None
+        
+        round_prefix = match_name[0].upper()
+        try:
+            match_num = int(match_name[1:])
+        except ValueError:
+            return None
+        
+        # Map prefix to round value
+        round_map = {
+            'Q': 'QUAL',
+            'F': 'TOP_N',
+        }
+        round_value = round_map.get(round_prefix)
+        if not round_value:
+            return None
+        
+        # Search all divisions for matching matchTuple
+        for division in schedule_data.get('divisions', []):
+            for match in division.get('matches', []):
+                match_tuple = match.get('matchInfo', {}).get('matchTuple')
+                if match_tuple and match_tuple.get('round') == round_value and match_tuple.get('match') == match_num:
+                    return match_tuple
+        
+        return None
+    
+    def _find_action_list_for_match(self, match_tuple):
+        """Find the action list that matches the given match tuple"""
+        if not match_tuple:
+            return None
+        
+        try:
+            action_lists = self._read_json(self.action_lists_file, {})
+            
+            for action_list_id, action_list_data in action_lists.items():
+                # Check if this action list matches the current match
+                if (action_list_data.get('division_id') == match_tuple.get('division') and
+                    action_list_data.get('round') == match_tuple.get('round') and
+                    action_list_data.get('instance') == match_tuple.get('instance') and
+                    action_list_data.get('match_number') == match_tuple.get('match')):
+                    logger.info(f"Found action list '{action_list_data.get('name')}' for match {match_tuple}")
+                    return action_list_id
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"Error finding action list for match: {e}")
+            return None
     
     async def check_timers(self):
         """Check all active timers and trigger milestones"""
@@ -107,17 +223,26 @@ class TimerTickWorker:
                 
                 timer_config = Timer.from_dict(timers_saved[timer_id])
                 
-                # Get milestones from action list if specified, otherwise use timer's own milestones
+                # Get milestones from action list
+                # Priority: 1) Explicit action_list_id on timer, 2) Auto-detect from current match (if enabled), 3) Timer's own milestones
                 milestones = timer_config.milestones
-                if timer_config.action_list_id:
-                    # Load action lists
-                    action_lists_file = os.path.join('storage', 'action_lists.json')
+                action_list_id = timer_config.action_list_id
+                
+                # If no explicit action list and auto-detect is enabled, try to auto-detect from current match
+                if not action_list_id and timer_config.auto_detect_action_list and timer_config.field_id:
+                    current_match = self._get_current_match_from_schedule()
+                    if current_match:
+                        action_list_id = self._find_action_list_for_match(current_match)
+                        if action_list_id:
+                            logger.info(f"Auto-detected action list '{action_list_id}' for timer {timer_id} based on current match")
+                
+                # Load action list milestones if we have an action list ID
+                if action_list_id:
                     try:
-                        with open(action_lists_file, 'r') as f:
-                            action_lists = json.load(f)
+                        action_lists = self._read_json(self.action_lists_file, {})
                         
-                        if timer_config.action_list_id in action_lists:
-                            action_list_data = action_lists[timer_config.action_list_id]
+                        if action_list_id in action_lists:
+                            action_list_data = action_lists[action_list_id]
                             from models.timer import ActionList
                             action_list = ActionList.from_dict(action_list_data)
                             milestones = action_list.milestones

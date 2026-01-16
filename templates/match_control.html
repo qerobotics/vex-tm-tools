@@ -8,7 +8,7 @@
     <p>Send commands to VEX Tournament Manager field sets</p>
 </div>
 
-<div style="max-width: 1200px; margin: 0 auto;">
+<div style="max-width: 1200px; width: 100%; margin: 0 auto; padding: 0 1rem;">
     <!-- Field Selection -->
     <div class="card" style="margin-bottom: 1.5rem;">
         <h2><i class="ri-layout-grid-line"></i> Field Selection</h2>
@@ -77,6 +77,10 @@
             <button class="btn-large btn-accent" onclick="sendAudienceDisplay('RANKINGS')">
                 <i class="ri-bar-chart-line"></i>
                 <span>Rankings</span>
+            </button>
+            <button class="btn-large btn-accent" onclick="sendAudienceDisplay('BLANK')">
+                <i class="ri-layout-masonry-line"></i>
+                <span>Blank</span>
             </button>
         </div>
     </div>
@@ -278,6 +282,16 @@
     width: 90%;
 }
 
+@media (max-width: 768px) {
+    .button-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .btn-large {
+        width: 100%;
+    }
+}
+
 .modal-content h2 {
     margin-top: 0;
 }
@@ -353,7 +367,7 @@ async function sendCommand(command) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                command: command
+                cmd: command
             })
         });
         
@@ -376,8 +390,8 @@ async function sendAudienceDisplay(display) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                command: 'setAudienceDisplay',
-                params: { display: display }
+                cmd: 'setAudienceDisplay',
+                display: display
             })
         });
         
@@ -416,8 +430,8 @@ async function queueSkillsMatch() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                command: 'queueSkills',
-                params: { skillsID: parseInt(skillsId) }
+                cmd: 'queueSkills',
+                skillsID: parseInt(skillsId)
             })
         });
         

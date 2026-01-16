@@ -3,11 +3,38 @@
 This document provides a comprehensive reference for all supported actions in the VEX TM Manager Tools system. Actions can be triggered manually, through timer milestones, or via event mappings.
 
 ## Table of Contents
+- [Common Action Properties](#common-action-properties)
 - [Audio Actions (Spotify)](#audio-actions-spotify)
 - [Video Actions (ATEM)](#video-actions-atem)
 - [Lighting Actions (OSC/Zeros)](#lighting-actions-osczeros)
 - [Message Actions](#message-actions)
 - [Action Lists](#action-lists)
+
+---
+
+## Common Action Properties
+
+All actions support the following optional properties:
+
+### delay
+**Type**: `number` (seconds)  
+**Description**: Delay the execution of the action by the specified number of seconds.
+
+**Example**:
+```json
+{
+  "type": "video",
+  "command": "switch",
+  "camera_id": "1",
+  "delay": 15
+}
+```
+This would delay switching to camera 1 for 15 seconds after the event is triggered.
+
+### priority
+**Type**: `number`  
+**Default**: `0`  
+**Description**: When multiple actions of the same type are triggered, only the highest priority action(s) will be executed.
 
 ---
 
@@ -422,6 +449,10 @@ Action lists are reusable collections of timed actions that can be assigned to t
   "id": "standard-match",
   "name": "Standard Match Actions",
   "description": "Standard actions for a VEX match timer",
+  "division_id": null,
+  "round": null,
+  "instance": null,
+  "match_number": null,
   "milestones": [
     {
       "time_remaining": 15,
@@ -467,6 +498,56 @@ Action lists are reusable collections of timed actions that can be assigned to t
   ]
 }
 ```
+
+### Match Linking
+
+Action lists can be automatically linked to specific matches by setting the match identification fields. When a timer is running with a field_id set, the system will automatically detect the current match on that field and use the appropriate action list.
+
+**Match Linking Fields:**
+- `division_id` (number): The division ID from the TM API
+- `round` (string): The round type (`"QUAL"`, `"TOP_N"`, etc.)
+- `instance` (number): The instance number (usually 1)
+- `match_number` (number): The match number within the round
+
+**Example: Action list for Qualification Match #5 in Division 1:**
+```json
+{
+  "id": "quals-5-special",
+  "name": "Q5 Special Introduction",
+  "description": "Special camera sequence for Q5",
+  "division_id": 1,
+  "round": "QUAL",
+  "instance": 1,
+  "match_number": 5,
+  "milestones": [
+    {
+      "time_remaining": 20,
+      "action_type": "video",
+      "action_payload": {
+        "command": "switch",
+        "camera_id": 3
+      },
+      "message": "Special match introduction!"
+    }
+  ]
+}
+```
+
+**How Auto-Detection Works:**
+1. When a timer starts, if it has a `field_id` but no explicit `action_list_id`, the system queries the TM API for the current match on that field
+2. It extracts the match tuple (division, round, instance, match number)
+3. It searches all action lists for one with matching `division_id`, `round`, `instance`, and `match_number`
+4. If found, those milestones are used instead of the timer's default milestones
+
+**Priority:**
+1. Explicit `action_list_id` on timer (highest priority)
+2. Auto-detected action list based on current match
+3. Timer's own milestones (fallback)
+
+This allows you to:
+- Create special sequences for specific matches (finals, featured matches, etc.)
+- Automatically switch to the correct action list without manual intervention
+- Have field-specific behavior determined by what match is loaded
 
 ### Using Action Lists with Timers
 
@@ -598,6 +679,37 @@ Actions can also be triggered by events through the `actions.json` file. These a
               "type": "lighting",
               "command": "go",
               "preset_id": "1"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
+```
+
+### Example: Delayed Actions
+Actions can include a `delay` field to postpone execution. This is useful for scenarios like switching cameras a few seconds after a match starts:
+
+```json
+{
+  "on_event": {
+    "matchStarted": [
+      {
+        "match_name": "*",
+        "fields": {
+          "1": [
+            {
+              "type": "lighting",
+              "preset_id": "15",
+              "comment": "Immediately set match lighting"
+            },
+            {
+              "type": "video",
+              "camera_id": "1",
+              "command": "switch",
+              "delay": 15,
+              "comment": "Switch to match camera after 15 seconds"
             }
           ]
         }

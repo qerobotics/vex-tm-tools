@@ -802,8 +802,7 @@ async function sendTMCommand(command) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                field_id: currentTimer.field_id,
-                command: command
+                cmd: command
             })
         });
         const result = await response.json();

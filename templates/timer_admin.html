@@ -92,6 +92,14 @@
                     <small class="muted">Select an action list to run during this timer</small>
                 </div>
 
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="timer-auto-detect" name="auto_detect_action_list" checked>
+                        Auto-detect action list from current match
+                    </label>
+                    <small class="muted">Automatically use match-specific action lists based on the current match when enabled (field_id must be set)</small>
+                </div>
+
                 <div class="form-actions" style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 2rem;">
                     <button type="button" class="btn-secondary" onclick="closeModal()">Cancel</button>
                     <button type="submit" class="btn-primary">Save Timer</button>
@@ -120,6 +128,36 @@
                 <div class="form-group">
                     <label for="action-list-description">Description (Optional)</label>
                     <input type="text" id="action-list-description" name="description" placeholder="Brief description of this action list">
+                </div>
+
+                <div class="form-group">
+                    <label>Match Linking (Optional)</label>
+                    <p class="muted" style="margin-bottom: 0.5rem;">Link this action list to a specific match. When a timer runs on the field with this match active, these actions will automatically be used.</p>
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem;">
+                        <div>
+                            <label for="action-list-division" style="font-size: 0.875rem;">Division ID</label>
+                            <input type="number" id="action-list-division" name="division_id" placeholder="e.g., 1" min="1">
+                        </div>
+                        <div>
+                            <label for="action-list-round" style="font-size: 0.875rem;">Round</label>
+                            <input type="text" id="action-list-round" name="round" placeholder="e.g., QUAL" list="round-options">
+                            <datalist id="round-options">
+                                <option value="QUAL">
+                                <option value="TOP_N">
+                                <option value="RR">
+                                <option value="ELIM">
+                            </datalist>
+                        </div>
+                        <div>
+                            <label for="action-list-instance" style="font-size: 0.875rem;">Instance</label>
+                            <input type="number" id="action-list-instance" name="instance" placeholder="e.g., 1" min="1">
+                        </div>
+                        <div>
+                            <label for="action-list-match" style="font-size: 0.875rem;">Match #</label>
+                            <input type="number" id="action-list-match" name="match_number" placeholder="e.g., 5" min="1">
+                        </div>
+                    </div>
+                    <small class="muted">Leave blank to make this action list non-match-specific. Set all fields to link to a specific match (e.g., Qualification Match #5 in Division 1).</small>
                 </div>
 
                 <div class="form-group">
@@ -632,6 +670,7 @@ function editTimer(timerId) {
     document.getElementById('timer-duration').value = timer.duration;
     document.getElementById('timer-field').value = timer.field_id || '';
     document.getElementById('timer-action-list').value = timer.action_list_id || '';
+    document.getElementById('timer-auto-detect').checked = timer.auto_detect_action_list !== false; // Default to true
     
     // Clear and populate milestones
     document.getElementById('milestones-container').innerHTML = '';
@@ -821,6 +860,7 @@ document.getElementById('timer-form').addEventListener('submit', function(e) {
         duration: parseInt(formData.get('duration')),
         field_id: formData.get('field_id') || null,
         action_list_id: formData.get('action_list_id') || null,
+        auto_detect_action_list: document.getElementById('timer-auto-detect').checked,
         milestones: []
     };
     
@@ -1034,13 +1074,15 @@ function populateActionListDropdown() {
     // Keep the "None" option
     dropdown.innerHTML = '<option value="">None - No Actions</option>';
     
-    // Add action lists
-    Object.entries(actionLists).forEach(([id, actionList]) => {
-        const option = document.createElement('option');
-        option.value = id;
-        option.textContent = actionList.name;
-        dropdown.appendChild(option);
-    });
+    // Add action lists sorted alphabetically by name
+    Object.entries(actionLists)
+        .sort(([, a], [, b]) => a.name.localeCompare(b.name))
+        .forEach(([id, actionList]) => {
+            const option = document.createElement('option');
+            option.value = id;
+            option.textContent = actionList.name;
+            dropdown.appendChild(option);
+        });
 }
 
 function renderActionListsList() {
@@ -1057,9 +1099,24 @@ function renderActionListsList() {
         return;
     }
     
-    container.innerHTML = Object.entries(actionLists).map(([id, actionList]) => {
+    container.innerHTML = Object.entries(actionLists)
+        .sort(([, a], [, b]) => a.name.localeCompare(b.name))
+        .map(([id, actionList]) => {
         const milestoneCount = actionList.milestones ? actionList.milestones.length : 0;
         const description = actionList.description || 'No description';
+        
+        // Build match linking info badge
+        let matchBadge = '';
+        if (actionList.division_id || actionList.round || actionList.match_number) {
+            const parts = [];
+            if (actionList.division_id) parts.push(`Div ${actionList.division_id}`);
+            if (actionList.round) {
+                const roundLabel = actionList.round === 'QUAL' ? 'Q' : actionList.round === 'TOP_N' ? 'F' : actionList.round;
+                parts.push(roundLabel);
+            }
+            if (actionList.match_number) parts.push(`#${actionList.match_number}`);
+            matchBadge = `<span class="milestone-count" style="background: var(--accent);">🎯 ${parts.join(' ')}</span>`;
+        }
         
         return `
             <div class="timer-card">
@@ -1067,6 +1124,7 @@ function renderActionListsList() {
                     <div class="timer-card-title">
                         <h3>${escapeHtml(actionList.name)}</h3>
                         <span class="milestone-count">${milestoneCount} action${milestoneCount !== 1 ? 's' : ''}</span>
+                        ${matchBadge}
                     </div>
                     <div class="timer-card-actions">
                         <button class="btn-icon" onclick="editActionList('${id}')" title="Edit">
@@ -1104,6 +1162,12 @@ function editActionList(actionListId) {
     document.getElementById('action-list-id').value = actionListId;
     document.getElementById('action-list-name').value = actionList.name;
     document.getElementById('action-list-description').value = actionList.description || '';
+    
+    // Set match linking fields
+    document.getElementById('action-list-division').value = actionList.division_id || '';
+    document.getElementById('action-list-round').value = actionList.round || '';
+    document.getElementById('action-list-instance').value = actionList.instance || '';
+    document.getElementById('action-list-match').value = actionList.match_number || '';
     
     // Clear and populate milestones
     document.getElementById('milestones-container').innerHTML = '';
@@ -1180,6 +1244,10 @@ document.getElementById('action-list-form').addEventListener('submit', function(
         id: actionListId,
         name: formData.get('name'),
         description: formData.get('description') || null,
+        division_id: formData.get('division_id') ? parseInt(formData.get('division_id')) : null,
+        round: formData.get('round') || null,
+        instance: formData.get('instance') ? parseInt(formData.get('instance')) : null,
+        match_number: formData.get('match_number') ? parseInt(formData.get('match_number')) : null,
         milestones: []
     };
     

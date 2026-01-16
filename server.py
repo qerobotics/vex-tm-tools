@@ -195,8 +195,10 @@ def before_request():
 @app.route('/')
 def index():
     """
-    Serves the main dashboard page.
+    Serves the main dashboard page or redirects emcees to their dedicated homepage.
     """
+    if 'user' in session and session['user']['role'] == 'emcee':
+        return redirect(url_for('emcee_home'))
     return render_template('index.html')
 
 @app.route('/api/status')
@@ -206,6 +208,12 @@ def api_status():
     """
     field_statuses = get_field_statuses()
     return jsonify([status.to_dict() for status in field_statuses])
+
+@app.route('/emcee')
+@login_required(roles=["emcee", "av", "admin", "owner"])
+def emcee_home():
+    """Emcee dedicated homepage with quick access to timers and match stats"""
+    return render_template('emcee_home.html')
 
 @app.route('/api/health')
 @login_required(roles=["admin", "owner"])
@@ -235,15 +243,39 @@ def api_health():
     connected_fields = sum(1 for fs in field_statuses if getattr(fs, 'websocket_connected', True))
     total_fields = len(field_statuses)
     
+    # Get current metrics
+    current_cpu = round(process.cpu_percent(interval=0.1), 2)
+    current_memory_percent = round(process.memory_percent(), 2)
+    current_memory_mb = round(memory_info.rss / (1024 * 1024), 2)
+    
+    # Store historical data in application context (last 60 readings = 5 minutes at 5s intervals)
+    if not hasattr(app, 'health_history'):
+        app.health_history = {
+            'timestamps': [],
+            'cpu': [],
+            'memory': []
+        }
+    
+    current_timestamp = int(time.time())
+    app.health_history['timestamps'].append(current_timestamp)
+    app.health_history['cpu'].append(current_cpu)
+    app.health_history['memory'].append(current_memory_percent)
+    
+    # Keep only last 60 readings
+    if len(app.health_history['timestamps']) > 60:
+        app.health_history['timestamps'] = app.health_history['timestamps'][-60:]
+        app.health_history['cpu'] = app.health_history['cpu'][-60:]
+        app.health_history['memory'] = app.health_history['memory'][-60:]
+    
     health_data = {
         'uptime_seconds': int(uptime_seconds),
         'uptime_formatted': format_uptime(uptime_seconds),
         'memory': {
-            'rss_mb': round(memory_info.rss / (1024 * 1024), 2),
+            'rss_mb': current_memory_mb,
             'vms_mb': round(memory_info.vms / (1024 * 1024), 2),
-            'percent': round(process.memory_percent(), 2)
+            'percent': current_memory_percent
         },
-        'cpu_percent': round(process.cpu_percent(interval=0.1), 2),
+        'cpu_percent': current_cpu,
         'threads': process.num_threads(),
         'fields': {
             'total': total_fields,
@@ -253,7 +285,12 @@ def api_health():
         'events': {
             'websocket_buffer': websocket_events_count
         },
-        'timestamp': int(time.time())
+        'timestamp': current_timestamp,
+        'history': {
+            'timestamps': app.health_history['timestamps'],
+            'cpu': app.health_history['cpu'],
+            'memory': app.health_history['memory']
+        }
     }
     
     return jsonify(health_data)
@@ -1761,16 +1798,17 @@ def api_timer_team_info(timer_id):
 def api_tm_send_command():
     """Send a command to TM via websocket"""
     data = request.json
-    command = data.get('command')
+    cmd = data.get('cmd')
     
-    if not command:
-        return jsonify({"status": "error", "message": "command required"}), 400
+    if not cmd:
+        return jsonify({"status": "error", "message": "cmd field required"}), 400
     
     # Queue an event to send the command
+    # The entire data dict is passed as the command payload
     event = Event(
         type="tm_command",
         field=None,
-        payload={"command": command, "params": data.get('params', {})}
+        payload=data  # Pass the entire command structure (cmd + any parameters)
     )
     
     if event_queue and loop:
@@ -1960,7 +1998,11 @@ def api_action_lists_create():
             id=action_list_id,
             name=name,
             description=data.get('description'),
-            milestones=milestones
+            milestones=milestones,
+            division_id=data.get('division_id'),
+            round=data.get('round'),
+            instance=data.get('instance'),
+            match_number=data.get('match_number')
         )
         
         # Save to storage
@@ -2010,7 +2052,11 @@ def api_action_list_update(action_list_id):
             name=name,
             description=data.get('description'),
             milestones=milestones,
-            created_at=data.get('created_at')
+            created_at=data.get('created_at'),
+            division_id=data.get('division_id'),
+            round=data.get('round'),
+            instance=data.get('instance'),
+            match_number=data.get('match_number')
         )
         
         # Save to storage

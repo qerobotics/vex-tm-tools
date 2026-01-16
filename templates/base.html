@@ -39,6 +39,14 @@
       line-height: 1.45;
       margin: 0;
       padding: 0;
+      overflow-x: hidden; /* Prevent horizontal scroll */
+      max-width: 100vw; /* Ensure body doesn't exceed viewport width */
+  }
+  
+  /* Ensure all elements respect viewport width */
+  * {
+      box-sizing: border-box;
+      max-width: 100%;
   }
 
   /* Typographic scale */
@@ -99,7 +107,7 @@
   }
 
   /* Main content area */
-  main{max-width:920px;margin:2rem auto;padding:1.25rem}
+  main{max-width:920px;margin:2rem auto;padding:1.25rem;width:100%;overflow-x:hidden;}
   
   /* Timer page full width */
   body.full-width-timer-page main {
@@ -426,27 +434,44 @@
         </div>
       </li>
       {% if 'user' in session and session.user.role in ['emcee', 'av', 'admin', 'owner'] %}
+      <!-- Timers Icon -->
       <div class="dropdown">
-          <a href="#" class="dropdown-toggle" title="Tools" style="font-size: 1.5rem; padding-top: 14px; padding-bottom: 14px;"><i class="ri-tools-line"></i></a>
+          <a href="#" class="dropdown-toggle" title="Timers" style="font-size: 1.5rem; padding-top: 14px; padding-bottom: 14px;"><i class="ri-timer-line"></i></a>
           <div class="dropdown-content">
-              {% if session.user.role in ['admin', 'owner'] %}
-                <a href="{{ url_for('pause_controls') }}">Pause Controls</a>
-              {% endif %}
+              <div class="dropdown-header">Timers</div>
+              <a href="{{ url_for('timers_overview') }}">Timers Overview</a>
               {% if session.user.role in ['admin', 'owner', 'av'] %}
-                <a href="{{ url_for('controls_page') }}">Manual Controls</a>
-                <a href="{{ url_for('timer_admin') }}">Timer Admin</a>
-                <a href="{{ url_for('match_control') }}">Match Control</a>
-              {% endif %}
-              {% if session.user.role in ['emcee', 'av', 'admin', 'owner'] %}
-                <a href="{{ url_for('timers_overview') }}">Timers</a>
-                <a href="{{ url_for('match_stats') }}">Match Stats</a>
-              {% endif %}
-              {% if session.user.role in ['admin', 'owner'] %}
-                <a href="{{ url_for('event_simulator_page') }}">Event Simulator</a>
+              <a href="{{ url_for('timer_admin') }}">Timer Admin</a>
               {% endif %}
           </div>
       </div>
-      {% if session.user.role in ['admin', 'owner'] %}
+      <!-- Match Management Icon -->
+      <div class="dropdown">
+          <a href="#" class="dropdown-toggle" title="Matches" style="font-size: 1.5rem; padding-top: 14px; padding-bottom: 14px;"><i class="ri-football-line"></i></a>
+          <div class="dropdown-content">
+              <div class="dropdown-header">Match Management</div>
+              <a href="{{ url_for('match_stats') }}">Match Stats</a>
+              {% if session.user.role in ['admin', 'owner', 'av'] %}
+              <a href="{{ url_for('match_control') }}">Match Control</a>
+              {% endif %}
+          </div>
+      </div>
+      {% if session.user.role in ['admin', 'owner', 'av'] %}
+      <!-- AV Controls Icon -->
+      <div class="dropdown">
+          <a href="#" class="dropdown-toggle" title="AV Controls" style="font-size: 1.5rem; padding-top: 14px; padding-bottom: 14px;"><i class="ri-slideshow-line"></i></a>
+          <div class="dropdown-content">
+              <div class="dropdown-header">AV Controls</div>
+              <a href="{{ url_for('controls_page') }}">Manual Controls</a>
+              {% if session.user.role in ['admin', 'owner'] %}
+              <a href="{{ url_for('pause_controls') }}">Pause Controls</a>
+              <a href="{{ url_for('event_simulator_page') }}">Event Simulator</a>
+              {% endif %}
+          </div>
+      </div>
+      {% endif %}
+      {% endif %}
+      {% if 'user' in session and session.user.role in ['admin', 'owner'] %}
       <div class="dropdown">
           <a href="#" class="dropdown-toggle" title="Server" style="font-size: 1.5rem; padding-top: 14px; padding-bottom: 14px;"><i class="ri-server-line"></i></a>
           <div class="dropdown-content">
@@ -455,7 +480,6 @@
               <a href="{{ url_for('logs_page') }}">Server Logs</a>
           </div>
       </div>
-      {% endif %}
       {% endif %}
       <div class="user-menu-wrapper">
         <div class="dropdown">

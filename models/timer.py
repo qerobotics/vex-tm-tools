@@ -11,6 +11,11 @@ class ActionList:
     description: Optional[str] = None
     milestones: List['TimerMilestone'] = field(default_factory=list)
     created_at: Optional[str] = None
+    # Match linking fields - automatically determines field from match
+    division_id: Optional[int] = None
+    round: Optional[str] = None  # 'QUAL', 'TOP_N', etc.
+    instance: Optional[int] = None
+    match_number: Optional[int] = None
     
     def __post_init__(self):
         if self.created_at is None:
@@ -22,7 +27,11 @@ class ActionList:
             'name': self.name,
             'description': self.description,
             'milestones': [m.to_dict() for m in self.milestones],
-            'created_at': self.created_at
+            'created_at': self.created_at,
+            'division_id': self.division_id,
+            'round': self.round,
+            'instance': self.instance,
+            'match_number': self.match_number
         }
     
     @classmethod
@@ -33,7 +42,11 @@ class ActionList:
             name=data['name'],
             description=data.get('description'),
             milestones=milestones,
-            created_at=data.get('created_at')
+            created_at=data.get('created_at'),
+            division_id=data.get('division_id'),
+            round=data.get('round'),
+            instance=data.get('instance'),
+            match_number=data.get('match_number')
         )
 
 @dataclass
@@ -74,6 +87,7 @@ class Timer:
     ready_states: Dict[str, bool] = field(default_factory=dict)  # Track which users pressed ready
     auto_start_tm: bool = False  # Auto-start TM countdown at 3 seconds
     match_number: Optional[str] = None  # Linked match number from schedule
+    auto_detect_action_list: bool = True  # Auto-detect action list from current match
     
     def __post_init__(self):
         if self.created_at is None:
@@ -94,7 +108,8 @@ class Timer:
             'created_at': self.created_at,
             'ready_states': self.ready_states,
             'auto_start_tm': self.auto_start_tm,
-            'match_number': self.match_number
+            'match_number': self.match_number,
+            'auto_detect_action_list': self.auto_detect_action_list
         }
     
     @classmethod
@@ -110,7 +125,8 @@ class Timer:
             created_at=data.get('created_at'),
             ready_states=data.get('ready_states', {}),
             auto_start_tm=data.get('auto_start_tm', False),
-            match_number=data.get('match_number')
+            match_number=data.get('match_number'),
+            auto_detect_action_list=data.get('auto_detect_action_list', True)
         )
 
 @dataclass

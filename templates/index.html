@@ -46,7 +46,36 @@
         <div class="dashboard-card">
             <h2><i class="ri-heart-pulse-line"></i> System Health</h2>
             <div id="health-container" class="health-metrics">
-                <p class="muted">Loading health data...</p>
+                <div class="health-stats-grid">
+                    <div class="health-metric">
+                        <div class="health-metric-label">Uptime</div>
+                        <div class="health-metric-value" id="health-uptime">--</div>
+                    </div>
+                    <div class="health-metric">
+                        <div class="health-metric-label">Memory Usage</div>
+                        <div class="health-metric-value" id="health-memory">--</div>
+                        <div class="health-metric-small" id="health-memory-percent">--</div>
+                    </div>
+                    <div class="health-metric">
+                        <div class="health-metric-label">CPU Usage</div>
+                        <div class="health-metric-value" id="health-cpu">--</div>
+                    </div>
+                    <div class="health-metric">
+                        <div class="health-metric-label">Field Connections</div>
+                        <div class="health-metric-value" id="health-fields">--</div>
+                        <div class="health-metric-small" id="health-fields-disconnected">--</div>
+                    </div>
+                </div>
+                <div class="health-charts">
+                    <div class="health-chart-container">
+                        <h3>CPU Usage (%)</h3>
+                        <canvas id="cpu-chart"></canvas>
+                    </div>
+                    <div class="health-chart-container">
+                        <h3>Memory Usage (%)</h3>
+                        <canvas id="memory-chart"></canvas>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -387,6 +416,12 @@ body.full-width-dashboard-page section {
     gap: 1rem;
 }
 
+.health-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.75rem;
+}
+
 .health-metric {
     background: var(--bg-2);
     border-radius: 4px;
@@ -410,6 +445,41 @@ body.full-width-dashboard-page section {
     font-size: 0.9rem;
     color: var(--muted);
     margin-top: 0.25rem;
+}
+
+.health-charts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.health-chart-container {
+    background: var(--bg-2);
+    border-radius: 6px;
+    padding: 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.health-chart-container h3 {
+    color: var(--fg);
+    font-size: 0.9rem;
+    margin: 0 0 1rem 0;
+    font-weight: 600;
+}
+
+.health-chart-container canvas {
+    max-height: 150px;
+}
+
+@media (max-width: 1200px) {
+    .health-stats-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .health-charts {
+        grid-template-columns: 1fr;
+    }
 }
 
 /* D4: Actions Feed */
@@ -716,42 +786,133 @@ function formatMatchName(match) {
 }
 
 // D3: Fetch and display health metrics
+let cpuChart = null;
+let memoryChart = null;
+
+function initHealthCharts() {
+    const cpuCtx = document.getElementById('cpu-chart');
+    const memoryCtx = document.getElementById('memory-chart');
+    
+    if (!cpuCtx || !memoryCtx) return;
+    
+    const chartOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: {
+            duration: 0 // Disable animations for smooth real-time updates
+        },
+        scales: {
+            x: {
+                display: false,
+                grid: {
+                    display: false
+                }
+            },
+            y: {
+                beginAtZero: true,
+                max: 100,
+                ticks: {
+                    color: 'rgba(169, 177, 214, 0.8)',
+                    callback: function(value) {
+                        return value + '%';
+                    }
+                },
+                grid: {
+                    color: 'rgba(255, 255, 255, 0.05)'
+                }
+            }
+        },
+        plugins: {
+            legend: {
+                display: false
+            },
+            tooltip: {
+                enabled: true,
+                callbacks: {
+                    label: function(context) {
+                        return context.parsed.y.toFixed(2) + '%';
+                    }
+                }
+            }
+        }
+    };
+    
+    cpuChart = new Chart(cpuCtx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'CPU %',
+                data: [],
+                borderColor: 'rgba(122, 162, 247, 1)',
+                backgroundColor: 'rgba(122, 162, 247, 0.1)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: chartOptions
+    });
+    
+    memoryChart = new Chart(memoryCtx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Memory %',
+                data: [],
+                borderColor: 'rgba(187, 154, 247, 1)',
+                backgroundColor: 'rgba(187, 154, 247, 0.1)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: chartOptions
+    });
+}
+
 async function fetchHealth() {
     try {
         const response = await fetch('/api/health');
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const data = await response.json();
         
-        const container = document.getElementById('health-container');
-        container.innerHTML = `
-            <div class="health-metric">
-                <div class="health-metric-label">Uptime</div>
-                <div class="health-metric-value">${data.uptime_formatted}</div>
-            </div>
-            <div class="health-metric">
-                <div class="health-metric-label">Memory Usage</div>
-                <div class="health-metric-value">${data.memory.rss_mb} MB</div>
-                <div class="health-metric-small">${data.memory.percent}% of system</div>
-            </div>
-            <div class="health-metric">
-                <div class="health-metric-label">CPU Usage</div>
-                <div class="health-metric-value">${data.cpu_percent}%</div>
-            </div>
-            <div class="health-metric">
-                <div class="health-metric-label">Field Connections</div>
-                <div class="health-metric-value">${data.fields.connected}/${data.fields.total}</div>
-                <div class="health-metric-small">${data.fields.disconnected} disconnected</div>
-            </div>
-            <div class="health-metric">
-                <div class="health-metric-label">WebSocket Events</div>
-                <div class="health-metric-value">${data.events.websocket_buffer}</div>
-                <div class="health-metric-small">in buffer</div>
-            </div>
-        `;
+        // Update text metrics
+        document.getElementById('health-uptime').textContent = data.uptime_formatted;
+        document.getElementById('health-memory').textContent = data.memory.rss_mb + ' MB';
+        document.getElementById('health-memory-percent').textContent = data.memory.percent + '% of system';
+        document.getElementById('health-cpu').textContent = data.cpu_percent + '%';
+        document.getElementById('health-fields').textContent = `${data.fields.connected}/${data.fields.total}`;
+        document.getElementById('health-fields-disconnected').textContent = `${data.fields.disconnected} disconnected`;
+        
+        // Initialize charts if not already done
+        if (!cpuChart || !memoryChart) {
+            initHealthCharts();
+        }
+        
+        // Update charts with historical data
+        if (cpuChart && memoryChart && data.history) {
+            const labels = data.history.timestamps.map((ts, idx) => {
+                // Show relative time labels (last reading is "now")
+                const secondsAgo = (data.history.timestamps.length - 1 - idx) * 5;
+                return secondsAgo === 0 ? 'now' : `-${secondsAgo}s`;
+            });
+            
+            cpuChart.data.labels = labels;
+            cpuChart.data.datasets[0].data = data.history.cpu;
+            cpuChart.update('none'); // 'none' mode for performance
+            
+            memoryChart.data.labels = labels;
+            memoryChart.data.datasets[0].data = data.history.memory;
+            memoryChart.update('none');
+        }
     } catch (error) {
         console.error('Error fetching health:', error);
         const container = document.getElementById('health-container');
-        container.innerHTML = `<p class="muted">Error loading health data</p>`;
+        if (container && container.children.length === 0) {
+            container.innerHTML = `<p class="muted">Error loading health data</p>`;
+        }
     }
 }
 
@@ -839,4 +1000,5 @@ document.addEventListener('DOMContentLoaded', function() {
     setInterval(fetchRankings, 30000);
 });
 </script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 {% endblock %}

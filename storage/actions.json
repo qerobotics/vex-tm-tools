@@ -1,79 +1,19 @@
 {
     "on_event": {
-        "fieldActivated": [
+        "fieldMatchAssigned": [
             {
-                "match_name": "*",
+                "match_name": "Q*",
                 "fields": {
-                    "3": [
-                        {
-                            "type": "lighting",
-                            "preset_id": "1"
-                        }
-                    ],
                     "2": [
                         {
-                            "type": "lighting",
-                            "preset_id": "7"
+                            "type": "video",
+                            "camera_id": "2"
                         }
                     ],
                     "1": [
                         {
-                            "type": "lighting",
-                            "preset_id": "13"
-                        }
-                    ]
-                }
-            }
-        ],
-        "audienceDisplayChanged": [
-            {
-                "match_name": "*",
-                "payload_filter": {
-                    "display": "IN_MATCH"
-                },
-                "fields": {
-                    "3": [
-                        {
-                            "type": "lighting",
-                            "preset_id": "2"
-                        }
-                    ],
-                    "2": [
-                        {
-                            "type": "lighting",
-                            "preset_id": "8"
-                        }
-                    ],
-                    "1": [
-                        {
-                            "type": "lighting",
-                            "preset_id": "14"
-                        }
-                    ]
-                }
-            }
-        ],
-        "matchStarted": [
-            {
-                "match_name": "*",
-                "fields": {
-
-                    "3": [
-                        {
-                            "type": "lighting",
-                            "preset_id": "3"
-                        }
-                    ],
-                    "2": [
-                        {
-                            "type": "lighting",
-                            "preset_id": "9"
-                        }
-                    ],
-                    "1": [
-                        {
-                            "type": "lighting",
-                            "preset_id": "15"
+                            "type": "video",
+                            "camera_id": "1"
                         }
                     ]
                 }
@@ -81,36 +21,20 @@
         ],
         "matchStopped": [
             {
-                "match_name": "*",
+                "match_name": "Q*",
                 "fields": {
-                    "3": [
-                        {
-                            "type": "lighting",
-                            "preset_id": "4"
-                        },
-                        {
-                            "type": "lighting",
-                            "release_id": "2"
-                        }
-                    ],
                     "2": [
                         {
-                            "type": "lighting",
-                            "preset_id": "10"
-                        },
-                        {
-                            "type": "lighting",
-                            "release_id": "2"
+                            "type": "video",
+                            "camera_id": "1",
+                            "delay": 15
                         }
                     ],
                     "1": [
                         {
-                            "type": "lighting",
-                            "preset_id": "16"
-                        },
-                        {
-                            "type": "lighting",
-                            "release_id": "2"
+                            "type": "video",
+                            "camera_id": "2",
+                            "delay": 15
                         }
                     ]
                 }
