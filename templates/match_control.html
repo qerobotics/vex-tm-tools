@@ -342,33 +342,18 @@ function selectField() {
         document.getElementById('field-id-display').textContent = field.id;
         document.getElementById('field-status-display').textContent = field.status || 'Unknown';
         document.getElementById('field-info').style.display = 'block';
-        
-        // Enable buttons
-        document.querySelectorAll('.btn-large').forEach(btn => {
-            btn.disabled = false;
-        });
     } else {
         document.getElementById('field-info').style.display = 'none';
-        
-        // Disable buttons
-        document.querySelectorAll('.btn-large').forEach(btn => {
-            btn.disabled = true;
-        });
     }
 }
 
 async function sendCommand(command) {
-    if (!selectedFieldId) {
-        showNotification('Please select a field first', 'error');
-        return;
-    }
-    
     try {
         const response = await fetch('/api/tm/send_command', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                field_id: selectedFieldId,
+                field_id: selectedFieldId || null,
                 command: command
             })
         });
@@ -387,17 +372,12 @@ async function sendCommand(command) {
 }
 
 async function sendAudienceDisplay(display) {
-    if (!selectedFieldId) {
-        showNotification('Please select a field first', 'error');
-        return;
-    }
-    
     try {
         const response = await fetch('/api/tm/send_command', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                field_id: selectedFieldId,
+                field_id: selectedFieldId || null,
                 command: 'setAudienceDisplay',
                 params: { display: display }
             })
@@ -417,10 +397,6 @@ async function sendAudienceDisplay(display) {
 }
 
 function showQueueSkillsDialog() {
-    if (!selectedFieldId) {
-        showNotification('Please select a field first', 'error');
-        return;
-    }
     document.getElementById('skills-dialog').style.display = 'flex';
 }
 
@@ -442,7 +418,7 @@ async function queueSkillsMatch() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                field_id: selectedFieldId,
+                field_id: selectedFieldId || null,
                 command: 'queueSkills',
                 params: { skillsID: parseInt(skillsId) }
             })
@@ -496,11 +472,6 @@ document.addEventListener('click', function(e) {
 // Initialize
 document.addEventListener('DOMContentLoaded', function() {
     loadFields();
-    
-    // Disable all buttons initially
-    document.querySelectorAll('.btn-large').forEach(btn => {
-        btn.disabled = true;
-    });
 });
 </script>
 {% endblock %}
