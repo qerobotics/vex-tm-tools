@@ -308,9 +308,14 @@ class EventProcessor:
             await self._execute_action(action_data, event)
 
     async def _execute_action(self, action_data, event=None):
+        logger.debug(f"_execute_action called with action_data={action_data}, event={event}")
+        
         action_type = action_data.get("type")
+        logger.debug(f"Action type: {action_type}")
+        
         if not action_type:
             logger.warning("Action data is missing 'type'.")
+            logger.debug(f"Action data without type: {action_data}")
             return
 
         logger.debug(f"Executing action: {action_data}")
@@ -343,18 +348,31 @@ class EventProcessor:
                 logger.info("Skipping audio action because controller is not available or audio is paused.")
         
         elif action_type == "video":
+            logger.debug(f"Processing video action: action_data={action_data}, event={event}")
+            logger.debug(f"ATEM controller available: {self.atem_controller is not None}, video paused: {self.config.paused.get('video')}")
+            
             if self.atem_controller and not self.config.paused.get("video"):
                 # Map field_id to camera_id if not specified and event is available
                 if "camera_id" not in action_data and event and event.field:
-                    action_data["camera_id"] = self.config.field_to_camera.get(str(event.field))
+                    mapped_camera = self.config.field_to_camera.get(str(event.field))
+                    action_data["camera_id"] = mapped_camera
+                    logger.debug(f"Mapped field {event.field} to camera_id: {mapped_camera}")
+                
+                logger.debug(f"Final action_data for VideoAction: {action_data}")
                 
                 if action_data.get("camera_id"):
+                    logger.debug(f"Creating VideoAction with data: {action_data}")
                     action = VideoAction(**action_data)
+                    logger.debug(f"VideoAction created: {action}")
+                    logger.debug(f"Calling atem_controller.execute_action...")
                     self.atem_controller.execute_action(action)
+                    logger.debug(f"atem_controller.execute_action completed")
                 else:
                     logger.warning(f"No camera_id for video action on event: {event.id if event else 'N/A'}")
+                    logger.debug(f"action_data: {action_data}, event.field: {event.field if event else 'N/A'}")
             else:
                 logger.info("Skipping video action because controller is not available or video is paused.")
+                logger.debug(f"Skip reason - controller: {self.atem_controller}, paused: {self.config.paused.get('video')}")
 
         elif action_type == "lighting":
             if self.zeros_controller and not self.config.paused.get("lighting"):
@@ -405,7 +423,9 @@ class EventProcessor:
         
         if event.type == "manual_action":
             logger.info(f"Handling manual action: {event.payload}")
-            await self._execute_action(event.payload)
+            logger.debug(f"Manual action details - payload: {event.payload}, event.field: {event.field}")
+            await self._execute_action(event.payload, event)
+            logger.debug(f"Manual action execution completed")
             return True
         
         if event.type == "tm_command":

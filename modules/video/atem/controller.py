@@ -12,43 +12,60 @@ class AtemController:
     def _connect(self):
         try:
             logger.info(f"Connecting to ATEM switcher at {self.atem_ip}...")
+            logger.debug(f"ATEM connection attempt started for IP: {self.atem_ip}")
             self.atem.connect(self.atem_ip)
             self.atem.waitForConnection(timeout=5)
             if self.atem.connected:
                 logger.info("Successfully connected to ATEM switcher.")
+                logger.debug(f"ATEM connection status: connected={self.atem.connected}")
             else:
                 logger.error("Failed to connect to ATEM switcher.")
+                logger.debug(f"ATEM connection failed - connected status: {self.atem.connected}")
         except Exception as e:
             logger.error(f"Error connecting to ATEM: {e}")
+            logger.debug(f"ATEM connection exception details: {e}", exc_info=True)
 
     def _ensure_connection(self):
+        logger.debug(f"Checking ATEM connection status: connected={self.atem.connected}")
         if not self.atem.connected:
             logger.warning("ATEM not connected. Attempting to reconnect...")
             self._connect()
+        logger.debug(f"ATEM connection check result: {self.atem.connected}")
         return self.atem.connected
 
     def execute_action(self, action):
+        logger.debug(f"ATEM execute_action called with action: {action}")
+        logger.debug(f"Action type: {type(action)}, camera_id: {getattr(action, 'camera_id', None)}")
+        
         if not self._ensure_connection():
             logger.error("Cannot execute ATEM action, no connection.")
+            logger.debug(f"ATEM connection failed, connected={self.atem.connected}")
             return
 
         camera_id = action.camera_id
         if not camera_id:
             logger.error("No camera_id provided for ATEM action")
+            logger.debug(f"Action object: {action}, attributes: {vars(action)}")
             return
             
         logger.info(f"Executing ATEM action: Switch to camera {camera_id}")
+        logger.debug(f"ATEM switcher ready, attempting to change program input to {camera_id}")
 
         try:
             # In PyATEMMax, camera IDs are usually integers.
             # We assume the camera_id in the action maps to a Program Input index.
             cam_index = int(camera_id)
+            logger.debug(f"Converted camera_id '{camera_id}' to integer: {cam_index}")
+            
             self.atem.changeProgramInput(cam_index)
             logger.info(f"Switched program input to {cam_index}")
+            logger.debug(f"ATEM changeProgramInput({cam_index}) command sent successfully")
         except ValueError:
             logger.error(f"Invalid camera_id for ATEM: {camera_id}. Must be an integer.")
+            logger.debug(f"ValueError converting camera_id: {camera_id}", exc_info=True)
         except Exception as e:
             logger.error(f"An unexpected error occurred during ATEM action: {e}")
+            logger.debug(f"Exception details during ATEM action", exc_info=True)
 
     def disconnect(self):
         if self.atem.connected:
