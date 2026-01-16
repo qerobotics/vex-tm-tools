@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 class VexTmApiClient:
     def __init__(self, client_id, client_secret, api_key, base_url):

@@ -23,12 +23,12 @@ logger = logging.getLogger(__name__)
 logging.getLogger("ntfy").setLevel(logging.INFO)
 logging.getLogger("server").setLevel(logging.INFO)
 
-# Enable debug logging for ATEM and event processor to help troubleshoot video switching
-logging.getLogger("modules.video.atem.controller").setLevel(logging.DEBUG)
-logging.getLogger("modules.event_processor").setLevel(logging.DEBUG)
+# Disable debug logging for ATEM and event processor
+logging.getLogger("modules.video.atem.controller").setLevel(logging.INFO)
+logging.getLogger("modules.event_processor").setLevel(logging.INFO)
 
-# Enable debug logging specifically for the zeros controller
-logging.getLogger("modules.vfx.zeros.controller").setLevel(logging.DEBUG)
+# Disable debug logging for the zeros controller
+logging.getLogger("modules.vfx.zeros.controller").setLevel(logging.INFO)
 
 # Global references for server.py to access
 spotify_controller = None
