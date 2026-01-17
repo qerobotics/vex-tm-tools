@@ -54,77 +54,8 @@
                 "action_payload": {
                     "command": "play_track",
                     "metadata": {
-                        "track_uri": "spotify:track:69uxyAqqPIsUyTO8txoP2M",
-                        "start_time_s": 1
-                    }
-                },
-                "message": "Match intro music starting!"
-            }
-        ]
-    },
-    "r16-6": {
-        "id": "r16-6",
-        "name": "R16 Match 6 - Beat Drop Intro",
-        "description": "Round of 16 Match 6 with timed beat drop",
-        "division_id": null,
-        "round": "R16",
-        "instance": 1,
-        "match_number": 6,
-        "milestones": [
-            {
-                "time_remaining": 15,
-                "action_type": "audio",
-                "action_payload": {
-                    "command": "play_track",
-                    "metadata": {
-                        "track_uri": "spotify:track:0VjIjW4GlUZAMYd2vXMi3b",
-                        "start_time_s": 1
-                    }
-                },
-                "message": "Match intro music starting!"
-            }
-        ]
-    },
-    "r16-8": {
-        "id": "r16-8",
-        "name": "R16 Match 8 - Beat Drop Intro",
-        "description": "Round of 16 Match 8 with timed beat drop",
-        "division_id": null,
-        "round": "R16",
-        "instance": 1,
-        "match_number": 8,
-        "milestones": [
-            {
-                "time_remaining": 15,
-                "action_type": "audio",
-                "action_payload": {
-                    "command": "play_track",
-                    "metadata": {
-                        "track_uri": "spotify:track:2tpWsVSb9UEmDRxAl1zhX1",
-                        "start_time_s": 8
-                    }
-                },
-                "message": "Match intro music starting!"
-            }
-        ]
-    },
-    "qf-1": {
-        "id": "qf-1",
-        "name": "QF Match 1 - Beat Drop Intro",
-        "description": "Quarterfinals Match 1 with timed beat drop",
-        "division_id": null,
-        "round": "QF",
-        "instance": 1,
-        "match_number": 1,
-        "milestones": [
-            {
-                "time_remaining": 14,
-                "action_type": "audio",
-                "action_payload": {
-                    "command": "play_track",
-                    "metadata": {
-                        "track_uri": "spotify:track:1mea3bSkSGXuIRvnydlB5b",
-                        "position_ms": 0
+                        "track_uri": "spotify:track:4Y7XAxTANhu3lmnLAzhWJW",
+                        "start_time_s": 14
                     }
                 },
                 "message": "Match intro music starting!"
@@ -133,12 +64,12 @@
     },
     "qf-2": {
         "id": "qf-2",
-        "name": "QF Match 2 - Beat Drop Intro",
-        "description": "Quarterfinals Match 2 with timed beat drop",
+        "name": "QF Match 1 - Beat Drop Intro",
+        "description": "Quarterfinals Match 1 with timed beat drop",
         "division_id": null,
         "round": "QF",
         "instance": 1,
-        "match_number": 2,
+        "match_number": 1,
         "milestones": [
             {
                 "time_remaining": 15,
@@ -154,37 +85,14 @@
             }
         ]
     },
-    "qf-3": {
-        "id": "qf-3",
-        "name": "QF Match 3 - Beat Drop Intro",
-        "description": "Quarterfinals Match 3 with timed beat drop",
-        "division_id": null,
-        "round": "QF",
-        "instance": 1,
-        "match_number": 3,
-        "milestones": [
-            {
-                "time_remaining": 15,
-                "action_type": "audio",
-                "action_payload": {
-                    "command": "play_track",
-                    "metadata": {
-                        "track_uri": "spotify:track:1yqMgZNrevsWMLWfO2PRp5",
-                        "start_time_s": 11
-                    }
-                },
-                "message": "Match intro music starting!"
-            }
-        ]
-    },
     "qf-4": {
         "id": "qf-4",
-        "name": "QF Match 4 - Beat Drop Intro",
-        "description": "Quarterfinals Match 4 with timed beat drop",
+        "name": "QF Match 2 - Beat Drop Intro",
+        "description": "Quarterfinals Match 2 with timed beat drop",
         "division_id": null,
         "round": "QF",
         "instance": 1,
-        "match_number": 4,
+        "match_number": 2,
         "milestones": [
             {
                 "time_remaining": 9,
