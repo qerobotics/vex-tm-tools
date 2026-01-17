@@ -307,8 +307,8 @@ class EventProcessor:
         for action_data in actions_to_run:
             await self._execute_action(action_data, event)
 
-    async def _execute_action(self, action_data, event=None):
-        logger.debug(f"_execute_action called with action_data={action_data}, event={event}")
+    async def _execute_action(self, action_data, event=None, is_manual=False):
+        logger.debug(f"_execute_action called with action_data={action_data}, event={event}, is_manual={is_manual}")
         
         action_type = action_data.get("type")
         logger.debug(f"Action type: {action_type}")
@@ -322,13 +322,14 @@ class EventProcessor:
         delay = action_data.get("delay")
         if delay and delay > 0:
             logger.info(f"Action has delay of {delay}s, scheduling for later execution")
-            asyncio.create_task(self._execute_action_delayed(action_data, event, delay))
+            asyncio.create_task(self._execute_action_delayed(action_data, event, delay, is_manual=is_manual))
             return
 
         logger.debug(f"Executing action: {action_data}")
 
         if action_type == "audio":
-            if self.spotify_controller and not self.config.paused.get("audio"):
+            # Allow manual actions to bypass paused state check
+            if self.spotify_controller and (is_manual or not self.config.paused.get("audio")):
                 action_data_copy = action_data.copy()
                 action_data_copy["metadata"] = action_data_copy.get("metadata", {}).copy()
 
@@ -352,13 +353,15 @@ class EventProcessor:
                 action = AudioAction(**action_data_copy)
                 self.spotify_controller.execute_action(action)
             else:
-                logger.info("Skipping audio action because controller is not available or audio is paused.")
+                reason = "controller is not available" if not self.spotify_controller else "audio is paused (automatic actions only)"
+                logger.info(f"Skipping audio action because {reason}.")
         
         elif action_type == "video":
             logger.debug(f"Processing video action: action_data={action_data}, event={event}")
             logger.debug(f"ATEM controller available: {self.atem_controller is not None}, video paused: {self.config.paused.get('video')}")
             
-            if self.atem_controller and not self.config.paused.get("video"):
+            # Allow manual actions to bypass paused state check
+            if self.atem_controller and (is_manual or not self.config.paused.get("video")):
                 # Map field_id to camera_id if not specified and event is available
                 if "camera_id" not in action_data and event and event.field:
                     mapped_camera = self.config.field_to_camera.get(str(event.field))
@@ -378,20 +381,23 @@ class EventProcessor:
                     logger.warning(f"No camera_id for video action on event: {event.id if event else 'N/A'}")
                     logger.debug(f"action_data: {action_data}, event.field: {event.field if event else 'N/A'}")
             else:
-                logger.info("Skipping video action because controller is not available or video is paused.")
+                reason = "controller is not available" if not self.atem_controller else "video is paused (automatic actions only)"
+                logger.info(f"Skipping video action because {reason}.")
                 logger.debug(f"Skip reason - controller: {self.atem_controller}, paused: {self.config.paused.get('video')}")
 
         elif action_type == "lighting":
-            if self.zeros_controller and not self.config.paused.get("lighting"):
+            # Allow manual actions to bypass paused state check
+            if self.zeros_controller and (is_manual or not self.config.paused.get("lighting")):
                 action = LightingAction(**action_data)
                 self.zeros_controller.execute_action(action)
             else:
-                logger.info("Skipping lighting action because controller is not available or lighting is paused.")
+                reason = "controller is not available" if not self.zeros_controller else "lighting is paused (automatic actions only)"
+                logger.info(f"Skipping lighting action because {reason}.")
         
         else:
             logger.warning(f"Unknown action type: {action_type}")
 
-    async def _execute_action_delayed(self, action_data, event, delay):
+    async def _execute_action_delayed(self, action_data, event, delay, is_manual=False):
         """Execute an action after a specified delay in seconds."""
         logger.info(f"Waiting {delay}s before executing action: {action_data.get('type')}")
         await asyncio.sleep(delay)
@@ -399,7 +405,7 @@ class EventProcessor:
         # Create a copy without the delay field to avoid infinite recursion
         action_data_copy = action_data.copy()
         action_data_copy.pop('delay', None)
-        await self._execute_action(action_data_copy, event)
+        await self._execute_action(action_data_copy, event, is_manual=is_manual)
 
     async def _handle_special_events(self, event):
         if event.type == "match_scheduled":
@@ -440,7 +446,7 @@ class EventProcessor:
         if event.type == "manual_action":
             logger.info(f"Handling manual action: {event.payload}")
             logger.debug(f"Manual action details - payload: {event.payload}, event.field: {event.field}")
-            await self._execute_action(event.payload, event)
+            await self._execute_action(event.payload, event, is_manual=True)
             logger.debug(f"Manual action execution completed")
             return True
         
