@@ -7,13 +7,13 @@
                     "2": [
                         {
                             "type": "video",
-                            "camera_id": "2"
+                            "camera_id": "1"
                         }
                     ],
                     "1": [
                         {
                             "type": "video",
-                            "camera_id": "1"
+                            "camera_id": "2"
                         }
                     ]
                 }
@@ -38,14 +38,14 @@
                     "2": [
                         {
                             "type": "video",
-                            "camera_id": "1",
+                            "camera_id": "2",
                             "delay": 15
                         }
                     ],
                     "1": [
                         {
                             "type": "video",
-                            "camera_id": "2",
+                            "camera_id": "1",
                             "delay": 15
                         }
                     ]
