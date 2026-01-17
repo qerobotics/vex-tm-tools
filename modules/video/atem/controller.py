@@ -78,7 +78,7 @@ class AtemController:
             # Use the correct PyATEMMax method: setProgramInputVideoSource(mE, videoSource)
             # mE is the Mix Effect (0 for ME1, 1 for ME2, etc.)
             # For most setups, we'll use Mix Effect 1 (index 0)
-            self.atem.setProgramInputVideoSource(0, cam_index)
+            self.atem.setProgramInputVideoSource(1, cam_index)
             logger.info(f"Switched program input to {cam_index} on ME1")
             logger.debug(f"ATEM setProgramInputVideoSource(0, {cam_index}) command sent successfully")
         except ValueError:
