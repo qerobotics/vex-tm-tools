@@ -21,3 +21,21 @@ from backend.core.redis import check_redis_connection, get_redis  # noqa: F401
 #
 # here, so every router can `from backend.core.dependencies import require_permission`
 # without importing another router module directly.
+
+
+def require_permission(permission: str):
+    """Placeholder RBAC dependency factory (plan §13).
+
+    Wave 3 owns the real RBAC implementation (OIDC session lookup, group ->
+    permission mapping, 403 enforcement). Until then this is a permissive
+    no-op so routers built by other waves (e.g. `routers/teams.py`) can
+    already declare their intended permission (`teams:read`, `video:upload`,
+    etc.) as a `Depends()` extension point without inventing ad-hoc auth.
+    Replace this function's body — do not change its signature — when RBAC
+    lands.
+    """
+
+    async def _dependency() -> None:
+        return None
+
+    return _dependency

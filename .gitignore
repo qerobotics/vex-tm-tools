@@ -17,3 +17,9 @@ storage/notified_matches.json
 
 .vscode/
 storage/popups.json
+
+# Python virtualenvs / local backend env files (plan Appendix B.1 backend)
+.venv/
+venv/
+.env
+backend/.env

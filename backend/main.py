@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 from backend.core.db import check_db_connection, engine
 from backend.core.redis import check_redis_connection, redis_client
 from backend.core.settings import settings
+from backend.routers.teams import router as teams_router
 from backend.schemas.health import HealthResponse, ReadyResponse
 
 logger = logging.getLogger(__name__)
@@ -136,6 +137,8 @@ def create_app() -> FastAPI:
         # outages are a documented graceful-degradation mode (Appendix A.10).
         http_status = 200 if db_ok else 503
         return JSONResponse(status_code=http_status, content=payload.model_dump())
+
+    app.include_router(teams_router)
 
     return app
 
