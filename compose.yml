@@ -19,9 +19,68 @@ services:
       - ".:/srv/vtmt"
     restart: unless-stopped
 
+  # ─────────────────────────────────────────────────────────────────────
+  # QEComp (new FastAPI/Postgres/Redis stack) — local dev infra only.
+  # Container names + host ports are distinct from the legacy app above so
+  # both can run side-by-side. Bring up with:
+  #   docker compose up -d postgres redis minio
+  # ─────────────────────────────────────────────────────────────────────
+  postgres:
+    container_name: qecomp-postgres
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: qecomp
+      POSTGRES_PASSWORD: qecomp
+      POSTGRES_DB: qecomp
+    ports:
+      - "5433:5432"
+    volumes:
+      - qecomp_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qecomp -d qecomp"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    container_name: qecomp-redis
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  minio:
+    container_name: qecomp-minio
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - qecomp_minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
 networks:
   cf:
     name: 'cf'
     ipam:
      config:
        - subnet: 10.65.1.0/24
+
+volumes:
+  qecomp_postgres_data:
+  qecomp_minio_data:
