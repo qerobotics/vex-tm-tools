@@ -1,0 +1,13 @@
+services:
+  switch_input:
+    description: "Switch the ME1 program input."
+    fields:
+      input_index:
+        type: integer
+        required: true
+  set_preview:
+    description: "Switch the ME1 preview input."
+    fields:
+      input_index:
+        type: integer
+        required: true

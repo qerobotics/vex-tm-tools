@@ -1,0 +1,25 @@
+services:
+  start_match:
+    description: "Start the currently queued match on this field set."
+  end_early:
+    description: "End the current match early."
+  abort:
+    description: "Abort the current match."
+  reset:
+    description: "Reset the field."
+  queue_next_match:
+    description: "Advance the queue to the next match."
+  queue_prev_match:
+    description: "Rewind the queue to the previous match."
+  set_audience_display:
+    description: "Change the audience display mode."
+    fields:
+      display:
+        type: string
+        required: true
+  queue_skills:
+    description: "Queue a skills match run."
+    fields:
+      skills_id:
+        type: integer
+        required: true

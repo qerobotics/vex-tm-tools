@@ -19,6 +19,11 @@ aiofiles==24.1.0
 numpy>=1.26,<2.3  # backend.modules.predictor: OPR least-squares regression (plan §5.12)
 python-multipart==0.0.20  # required by FastAPI for Form()/File() upload parsing (routers/teams.py)
 
+# Wave 2a — integration-specific third-party clients (plan §9 / §5.5-§5.7)
+PyATEMMax==1.0b9
+python-osc==1.10.2
+obs-websocket-py==1.0
+
 # Test stack (plan §14)
 pytest==8.3.4
 pytest-asyncio==0.25.0
