@@ -1,0 +1,10 @@
+services:
+  set_preset:
+    description: "Fire a lighting preset by number or by name (resolved via zeros_presets)."
+    fields:
+      preset_id:
+        type: integer
+        required: false
+      preset_name:
+        type: string
+        required: false

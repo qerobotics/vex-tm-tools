@@ -1,0 +1,14 @@
+domain: zeros
+name: "ZerOS Lighting"
+version: "1.0.0"
+description: "ZerOS lighting console control over OSC/UDP."
+requires_oauth: false
+config_schema:
+  ip:
+    type: string
+    label: "ZerOS Board IP Address"
+    secret: false
+  port:
+    type: integer
+    label: "OSC UDP Port"
+    secret: false

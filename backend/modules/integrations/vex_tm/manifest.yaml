@@ -1,0 +1,34 @@
+domain: vex_tm
+name: "VEX Tournament Manager"
+version: "1.0.0"
+description: "VEX TM field-set control: match flow, schedule polling, rankings."
+requires_oauth: false
+config_schema:
+  base_url:
+    type: string
+    label: "TM Base URL"
+    secret: false
+  client_id:
+    type: string
+    label: "OAuth2 Client ID"
+    secret: false
+  client_secret:
+    type: string
+    label: "OAuth2 Client Secret"
+    secret: true
+  api_key:
+    type: string
+    label: "HMAC API Key"
+    secret: true
+  field_set_id:
+    type: integer
+    label: "Field Set ID"
+    secret: false
+  poll_interval_seconds:
+    type: integer
+    label: "Schedule Poll Interval (seconds)"
+    secret: false
+  auth_url:
+    type: string
+    label: "OAuth2 Token Endpoint (advanced/testing override)"
+    secret: false

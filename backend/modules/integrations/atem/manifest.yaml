@@ -1,0 +1,14 @@
+domain: atem
+name: "Blackmagic ATEM"
+version: "1.0.0"
+description: "ATEM video switcher control (program/preview input)."
+requires_oauth: false
+config_schema:
+  ip:
+    type: string
+    label: "ATEM IP Address"
+    secret: false
+  field_to_input:
+    type: object
+    label: "Field ID -> ATEM Input Number"
+    secret: false
