@@ -1,6 +1,16 @@
-"""ORM models for timer_instances and prompter_cues (plan §8)."""
+"""ORM models for timer_instances and prompter_cues (plan §8).
+
+Wave 2b addendum: the plan's §8 schema for `timer_instances` did not include
+a countdown-duration column even though Appendix A.3 explicitly resolves
+"Countdown duration" as "Configurable per Timer instance in the UI (a number
+field, in seconds)". `duration_s` (and `token_nonce`, needed for Appendix
+B.8's regeneratable teleprompter HMAC token) are added here via a new Alembic
+migration (`alembic/versions/..._add_timer_duration_and_token_nonce.py`)
+rather than hand-editing Wave 1's already-merged initial migration.
+"""
 from __future__ import annotations
 
+import secrets
 import uuid
 from datetime import datetime
 
@@ -9,6 +19,11 @@ from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.core.db import Base
+
+#: Default countdown duration (seconds) for newly created Timer instances
+#: when the operator doesn't specify one. Chosen to match a typical VEX
+#: match length (15s autonomous + 105s driver control).
+DEFAULT_TIMER_DURATION_S = 120
 
 
 class TimerInstance(Base):
@@ -23,6 +38,13 @@ class TimerInstance(Base):
     field_id: Mapped[int] = mapped_column(Integer, nullable=False)
     tags: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     enabled: Mapped[bool] = mapped_column(Boolean, server_default="true")
+    # ── Wave 2b additions (see module docstring) ────────────────────────
+    duration_s: Mapped[int] = mapped_column(
+        Integer, server_default=str(DEFAULT_TIMER_DURATION_S), nullable=False
+    )
+    token_nonce: Mapped[str] = mapped_column(
+        String(64), default=lambda: secrets.token_urlsafe(16), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now()

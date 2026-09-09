@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<!--
+  Standalone EMCEE Teleprompter page (plan §5.10 / §7 / §12 / Appendix A.3,
+  A.13, A.14, B.3, B.4, B.8).
+
+  Per Appendix B.3, this is NOT part of the React SPA — it's a standalone
+  HTML + vanilla JS page with no build step, served directly by FastAPI at
+  GET /prompter/{entity_id}. The server is expected to:
+
+    1. Read this file's bytes.
+    2. Inject `entity_id` (from the URL path) and `token` (from the
+       `?token=` query string, or the empty string) into the
+       `window.__PROMPTER_CONFIG__` object below — e.g. by replacing the
+       `__ENTITY_ID__` / `__TOKEN__` placeholders with JSON-escaped values,
+       or by rendering this file through Jinja2 with those two variables.
+    3. Return the result as an `HTMLResponse` (no other templating needed —
+       everything else in this page is static).
+
+  WAVE 3 DEPENDENCY: `WS /ws/prompter/{entity_id}` (the actual WebSocket
+  route + ConnectionManager) does not exist yet — it's owned by Wave 3b
+  (Routers & WebSocket). This page assumes that endpoint will exist at that
+  path and will speak EventBusMessage-shaped JSON
+  (`{entity_id, entity_tags, type, timestamp, payload}`, see
+  backend/schemas/events.py). Until Wave 3 lands, this page will show the
+  "Reconnecting…" banner indefinitely against a real server, which is the
+  expected/correct behaviour for a client built against a not-yet-existing
+  endpoint.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no" />
+<title>QEComp Teleprompter</title>
+<style>
+  :root {
+    --bg: #000000;
+    --surface: rgba(8, 8, 8, 0.43);
+    --border: rgba(255, 255, 255, 0.08);
+    --text: #f5f5f5;
+    --text-dim: rgba(245, 245, 245, 0.6);
+    --accent: #4f8cff;
+    --danger: #ff4d4f;
+    --success: #34d058;
+    --warning: #f2c94c;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+    height: 100%;
+    overflow: hidden;
+    /* Appendix A.13: fully iPad-optimised, portrait + landscape, >=768px. */
+  }
+
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    padding: 16px;
+    gap: 16px;
+  }
+
+  /* ── Reconnecting banner (Appendix A.14) ─────────────────────────── */
+  #reconnect-banner {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    background: var(--warning);
+    color: #1a1a1a;
+    text-align: center;
+    font-weight: 600;
+    padding: 8px 12px;
+    font-size: clamp(12px, 2vw, 16px);
+  }
+  #reconnect-banner.visible { display: block; }
+
+  /* ── Countdown ────────────────────────────────────────────────────── */
+  #countdown-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    backdrop-filter: blur(12px);
+    padding: 24px;
+    text-align: center;
+    flex: 0 0 auto;
+  }
+
+  #phase-label {
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    font-size: clamp(12px, 2vw, 18px);
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+
+  #countdown-value {
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(48px, 16vw, 160px);
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  #countdown-value.warning { color: var(--warning); }
+  #countdown-value.danger { color: var(--danger); }
+  #countdown-value.running { color: var(--success); }
+
+  #start-btn {
+    margin-top: 16px;
+    font-size: clamp(16px, 3vw, 24px);
+    font-weight: 600;
+    padding: 16px 32px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
+  }
+  #start-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* ── Cues ─────────────────────────────────────────────────────────── */
+  #cue-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    backdrop-filter: blur(12px);
+    padding: 24px;
+    flex: 1 1 auto;
+    overflow-y: auto;
+  }
+
+  #active-cue {
+    font-size: clamp(20px, 4vw, 40px);
+    line-height: 1.4;
+  }
+
+  #next-cue-label {
+    margin-top: 24px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 14px;
+    color: var(--text-dim);
+  }
+
+  #next-cue {
+    font-size: clamp(14px, 2.2vw, 22px);
+    color: var(--text-dim);
+    margin-top: 8px;
+  }
+
+  #cue-section h1, #cue-section h2, #cue-section h3 { margin: 0.4em 0; }
+  #cue-section strong { color: white; }
+  #cue-section ul, #cue-section ol { padding-left: 1.4em; }
+
+  /* ── Upcoming match preview ───────────────────────────────────────── */
+  #match-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    backdrop-filter: blur(12px);
+    padding: 16px 24px;
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  #match-title {
+    font-size: clamp(14px, 2vw, 20px);
+    color: var(--text-dim);
+  }
+
+  #match-flag {
+    font-size: clamp(14px, 2vw, 20px);
+    font-weight: 700;
+    color: var(--warning);
+    display: none;
+  }
+  #match-flag.visible { display: inline-block; }
+</style>
+</head>
+<body>
+<div id="reconnect-banner">Reconnecting…</div>
+
+<div id="app">
+  <section id="countdown-section">
+    <div id="phase-label">Idle</div>
+    <div id="countdown-value">--:--</div>
+    <button id="start-btn" type="button">Start Countdown</button>
+  </section>
+
+  <section id="cue-section">
+    <div id="active-cue">Waiting for cues…</div>
+    <div id="next-cue-label">Next</div>
+    <div id="next-cue">—</div>
+  </section>
+
+  <section id="match-section">
+    <div id="match-title">No match queued</div>
+    <div id="match-flag">⚡ High-potential match</div>
+  </section>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ── Server-injected config (plan Appendix B.3) ────────────────────────
+  // The backend route serving this file at GET /prompter/{entity_id}
+  // replaces these two placeholders (e.g. via a simple str.replace() or a
+  // minimal Jinja2 render) before returning the HTML response. Falling
+  // back to reading them from the URL keeps this page directly openable
+  // during development without a templating server.
+  var CONFIG = {
+    entityId: "__ENTITY_ID__",
+    token: "__TOKEN__"
+  };
+
+  function fallbackFromUrl() {
+    var path = window.location.pathname.split("/").filter(Boolean);
+    var idx = path.indexOf("prompter");
+    if (CONFIG.entityId === "__ENTITY_ID__" && idx !== -1 && path[idx + 1]) {
+      CONFIG.entityId = decodeURIComponent(path[idx + 1]);
+    }
+    var params = new URLSearchParams(window.location.search);
+    if (CONFIG.token === "__TOKEN__") {
+      CONFIG.token = params.get("token") || "";
+    }
+  }
+  fallbackFromUrl();
+
+  // ── Tiny embedded Markdown renderer ────────────────────────────────────
+  // No CDN dependency (plan B.3: "avoid external CDN dependencies... for
+  // offline/field reliability"). Covers headers, bold, italic, and lists —
+  // sufficient for EMCEE runsheet/script cues per plan §5.10.
+  function renderMarkdown(src) {
+    if (!src) return "";
+    var escaped = String(src)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+
+    var lines = escaped.split(/\r?\n/);
+    var html = [];
+    var inList = null; // 'ul' | 'ol' | null
+
+    function closeList() {
+      if (inList) {
+        html.push("</" + inList + ">");
+        inList = null;
+      }
+    }
+
+    lines.forEach(function (line) {
+      var headerMatch = /^(#{1,3})\s+(.*)$/.exec(line);
+      var ulMatch = /^[-*]\s+(.*)$/.exec(line);
+      var olMatch = /^\d+\.\s+(.*)$/.exec(line);
+
+      if (headerMatch) {
+        closeList();
+        var level = headerMatch[1].length;
+        html.push("<h" + level + ">" + inlineMarkdown(headerMatch[2]) + "</h" + level + ">");
+      } else if (ulMatch) {
+        if (inList !== "ul") { closeList(); html.push("<ul>"); inList = "ul"; }
+        html.push("<li>" + inlineMarkdown(ulMatch[1]) + "</li>");
+      } else if (olMatch) {
+        if (inList !== "ol") { closeList(); html.push("<ol>"); inList = "ol"; }
+        html.push("<li>" + inlineMarkdown(olMatch[1]) + "</li>");
+      } else if (line.trim() === "") {
+        closeList();
+        html.push("<br/>");
+      } else {
+        closeList();
+        html.push("<p>" + inlineMarkdown(line) + "</p>");
+      }
+    });
+    closeList();
+    return html.join("\n");
+  }
+
+  function inlineMarkdown(text) {
+    return text
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.+?)\*/g, "<em>$1</em>")
+      .replace(/__(.+?)__/g, "<strong>$1</strong>")
+      .replace(/_(.+?)_/g, "<em>$1</em>");
+  }
+
+  // ── DOM refs ────────────────────────────────────────────────────────
+  var el = {
+    banner: document.getElementById("reconnect-banner"),
+    phaseLabel: document.getElementById("phase-label"),
+    countdownValue: document.getElementById("countdown-value"),
+    startBtn: document.getElementById("start-btn"),
+    activeCue: document.getElementById("active-cue"),
+    nextCueLabel: document.getElementById("next-cue-label"),
+    nextCue: document.getElementById("next-cue"),
+    matchTitle: document.getElementById("match-title"),
+    matchFlag: document.getElementById("match-flag")
+  };
+
+  function formatClock(totalSeconds) {
+    var s = Math.max(0, Math.floor(totalSeconds || 0));
+    var m = Math.floor(s / 60);
+    var rem = s % 60;
+    return (m < 10 ? "0" : "") + m + ":" + (rem < 10 ? "0" : "") + rem;
+  }
+
+  // ── Render functions, driven by EventBusMessage-shaped payloads ───────
+  // (backend.schemas.events.EventBusMessage: entity_id, entity_tags, type,
+  // timestamp, payload). The exact shape of `qecomp:timer:<id>:state` /
+  // TimerManager.get_state() is mirrored into WS messages by Wave 3's
+  // `/ws/prompter/{entity_id}` endpoint; this renderer defensively reads
+  // whichever fields are present rather than assuming a rigid contract,
+  // since that endpoint's exact message envelope is still to be finalized
+  // by Wave 3.
+  function renderTimerState(state) {
+    if (!state) return;
+    var phase = state.phase || "idle";
+    el.phaseLabel.textContent = ({
+      idle: "Idle",
+      countdown: "Countdown",
+      match_running: "Match Running",
+      match_complete: "Match Complete"
+    })[phase] || phase;
+
+    var displaySeconds = phase === "countdown" ? state.remaining : state.elapsed;
+    el.countdownValue.textContent = formatClock(displaySeconds);
+    el.countdownValue.className = "";
+    if (phase === "countdown") {
+      if (state.remaining <= 3) el.countdownValue.classList.add("danger");
+      else if (state.remaining <= 10) el.countdownValue.classList.add("warning");
+    } else if (phase === "match_running") {
+      el.countdownValue.classList.add("running");
+    }
+
+    el.startBtn.disabled = phase === "countdown" || phase === "match_running";
+  }
+
+  function renderCues(activeCue, nextCue) {
+    el.activeCue.innerHTML = activeCue
+      ? renderMarkdown(activeCue.content)
+      : "Waiting for cues…";
+    if (nextCue) {
+      el.nextCueLabel.style.display = "";
+      el.nextCue.style.display = "";
+      el.nextCue.innerHTML = renderMarkdown(nextCue.content);
+    } else {
+      el.nextCueLabel.style.display = "none";
+      el.nextCue.style.display = "none";
+    }
+  }
+
+  function renderMatchPreview(match) {
+    if (!match) {
+      el.matchTitle.textContent = "No match queued";
+      el.matchFlag.classList.remove("visible");
+      return;
+    }
+    var teamList = (match.teams || match.redTeams && match.redTeams.concat(match.blueTeams || [])) || [];
+    var parts = [];
+    if (match.matchNum) parts.push("Match " + match.matchNum);
+    if (match.round) parts.push(match.round);
+    if (teamList.length) parts.push(teamList.join(", "));
+    el.matchTitle.textContent = parts.length ? parts.join(" — ") : "Upcoming match";
+    el.matchFlag.classList.toggle("visible", Boolean(match.high_potential));
+  }
+
+  // ── WebSocket connection with exponential backoff reconnect ───────────
+  // (Appendix A.14: 1s, 2s, 4s, 8s, 16s, capped at 30s. Native WebSocket,
+  // no framework — plan Appendix B.3.)
+  //
+  // WAVE 3 DEPENDENCY: /ws/prompter/{entity_id} does not exist yet (owned
+  // by Wave 3b). This client assumes it will exist at that path.
+  var RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000];
+  var reconnectAttempt = 0;
+  var ws = null;
+  var intentionalClose = false;
+
+  function wsUrl() {
+    var proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    var qs = CONFIG.token ? "?token=" + encodeURIComponent(CONFIG.token) : "";
+    return proto + "//" + window.location.host + "/ws/prompter/" + encodeURIComponent(CONFIG.entityId) + qs;
+  }
+
+  function showReconnectBanner(visible) {
+    el.banner.classList.toggle("visible", visible);
+  }
+
+  function connect() {
+    intentionalClose = false;
+    try {
+      ws = new WebSocket(wsUrl());
+    } catch (err) {
+      scheduleReconnect();
+      return;
+    }
+
+    ws.onopen = function () {
+      reconnectAttempt = 0;
+      showReconnectBanner(false);
+    };
+
+    ws.onmessage = function (event) {
+      var msg;
+      try {
+        msg = JSON.parse(event.data);
+      } catch (err) {
+        return;
+      }
+      handleMessage(msg);
+    };
+
+    ws.onclose = function () {
+      if (!intentionalClose) {
+        showReconnectBanner(true);
+        scheduleReconnect();
+      }
+    };
+
+    ws.onerror = function () {
+      // onclose fires right after onerror for WebSocket; reconnect is
+      // scheduled there to avoid double-scheduling.
+    };
+  }
+
+  function scheduleReconnect() {
+    var delay = RECONNECT_DELAYS[Math.min(reconnectAttempt, RECONNECT_DELAYS.length - 1)];
+    reconnectAttempt += 1;
+    window.setTimeout(connect, delay);
+  }
+
+  // Handles an EventBusMessage-shaped WS payload
+  // ({entity_id, entity_tags, type, timestamp, payload}). Also tolerates a
+  // simpler `{type, ...}` shape in case Wave 3's WS envelope differs
+  // slightly, since that endpoint isn't built yet.
+  function handleMessage(msg) {
+    if (!msg || typeof msg !== "object") return;
+    var type = msg.type;
+    var payload = msg.payload || msg;
+
+    switch (type) {
+      case "timer_state":
+      case "timer_started":
+      case "timer_milestone":
+      case "timer_finished":
+      case "timer_stopped":
+        renderTimerState(payload);
+        break;
+      case "cues":
+        renderCues(payload.active, payload.next);
+        break;
+      case "upcoming_match":
+      case "match_prediction":
+        renderMatchPreview(payload);
+        break;
+      default:
+        // Unknown/forward-compatible message type — ignore rather than
+        // throw, so this page keeps working as Wave 3 iterates on the
+        // exact WS envelope.
+        break;
+    }
+  }
+
+  // ── Start Countdown button (Appendix A.3: EMCEE-only trigger) ─────────
+  el.startBtn.addEventListener("click", function () {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    el.startBtn.disabled = true;
+    ws.send(JSON.stringify({ type: "start_countdown", entity_id: CONFIG.entityId }));
+  });
+
+  connect();
+
+  // Expose a couple of internals for manual/automated testing of the
+  // Markdown renderer and message handling without a live WS server.
+  window.__prompterTestHooks = {
+    renderMarkdown: renderMarkdown,
+    handleMessage: handleMessage,
+    formatClock: formatClock
+  };
+})();
+</script>
+</body>
+</html>
