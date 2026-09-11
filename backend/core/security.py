@@ -16,12 +16,17 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import secrets
 from functools import lru_cache
 
 from cryptography.fernet import Fernet, InvalidToken
 
 from backend.core.exceptions import QECompError
 from backend.core.settings import settings
+
+#: Prefix every generated API key is stamped with (plan Appendix B.7), so
+#: keys are recognisable at a glance / in logs without decoding anything.
+API_KEY_PREFIX = "qec_"
 
 
 class EncryptionError(QECompError):
@@ -98,3 +103,21 @@ def validate_prompter_token(entity_id: str, nonce: str, token: str) -> bool:
         return False
     expected = generate_prompter_token(entity_id, nonce)
     return hmac.compare_digest(expected, token)
+
+
+# ── API keys (plan Appendix B.7) ────────────────────────────────────────
+
+
+def generate_api_key() -> str:
+    """Generate a new raw API key: `qec_` + a 43-char base64url token
+    (`secrets.token_urlsafe(32)`), per Appendix B.7. This raw value is shown
+    to the operator exactly once and never stored — only its SHA-256 hash
+    (see `hash_api_key`) is persisted."""
+    return f"{API_KEY_PREFIX}{secrets.token_urlsafe(32)}"
+
+
+def hash_api_key(raw_key: str) -> str:
+    """SHA-256 hex digest of a raw API key, for storage/lookup in
+    `api_keys.key_hash`. Per Appendix B.7 the raw key itself is never
+    stored."""
+    return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()

@@ -4,14 +4,16 @@
 Confirms:
   * CRUD works end-to-end through the real FastAPI app (`backend.main.app`)
     against the isolated `qecomp_wave2b` test database.
-  * The placeholder RBAC extension points (`_require_permission`) are wired
-    on every route (per plan §11's permission column) and don't block
-    requests yet — i.e. routes are reachable without a real RBAC
-    implementation, as the task requires, while still being structured so
-    Wave 3 can slot in real checks without touching route signatures.
   * `/timers/{entity_id}/start|stop|reset` correctly 503 when no
     `TimerManager` is wired onto `app.state` (e.g. a passive/non-leader
     node) and succeed once one is.
+
+Wave 3b note: `_require_permission` (per route, plan §11's permission
+column) is no longer a no-op — it now delegates to the real RBAC dependency
+in `backend/core/dependencies.py`. This file is about CRUD/business logic,
+not RBAC itself (that's covered by `tests/test_core/test_rbac.py`), so its
+fixtures override `get_current_principal` with an all-permissions principal
+so requests here don't need a real session/API key.
 """
 from __future__ import annotations
 
@@ -50,6 +52,7 @@ async def test_session_factory():
 @pytest.fixture
 async def app_and_client(test_session_factory):
     from backend.core.db import get_db
+    from backend.core.dependencies import ALL_PERMISSIONS, CurrentPrincipal, get_current_principal
     from backend.main import create_app
 
     server = fakeredis.FakeServer()
@@ -73,6 +76,15 @@ async def app_and_client(test_session_factory):
             yield session
 
     app.dependency_overrides[get_db] = _override_get_db
+
+    # This file tests CRUD/business logic, not RBAC itself (that's covered
+    # by `tests/test_core/test_rbac.py`) — bypass auth with an
+    # all-permissions principal so these requests don't need a real
+    # session/API key.
+    async def _override_get_current_principal():
+        return CurrentPrincipal(subject="test-admin", permissions={ALL_PERMISSIONS})
+
+    app.dependency_overrides[get_current_principal] = _override_get_current_principal
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -199,10 +211,13 @@ async def test_start_stop_reset_via_timer_manager(app_and_client, cleanup_entiti
 
 
 async def test_start_returns_503_without_timer_manager(cleanup_entities, test_session_factory):
-    """Confirms the placeholder-permission routes are reachable (no RBAC
-    blocking them yet) but correctly surface a 503 when no TimerManager is
-    wired onto app.state — e.g. a passive/non-leader node."""
+    """Confirms the RBAC-gated routes are still reachable (bypassed here via
+    an all-permissions principal override — RBAC enforcement itself is
+    covered by `tests/test_core/test_rbac.py`) but correctly surface a 503
+    when no TimerManager is wired onto app.state — e.g. a passive/non-leader
+    node."""
     from backend.core.db import get_db
+    from backend.core.dependencies import ALL_PERMISSIONS, CurrentPrincipal, get_current_principal
     from backend.main import create_app
 
     entity_id = _unique_entity_id()
@@ -215,6 +230,11 @@ async def test_start_returns_503_without_timer_manager(cleanup_entities, test_se
             yield session
 
     app.dependency_overrides[get_db] = _override_get_db
+
+    async def _override_get_current_principal():
+        return CurrentPrincipal(subject="test-admin", permissions={ALL_PERMISSIONS})
+
+    app.dependency_overrides[get_current_principal] = _override_get_current_principal
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

@@ -4,12 +4,15 @@ Per §C.2, this is the ONLY file permitted to import and instantiate
 `LeaderElection`, `AutomationEngine`, `TimerManager`, `Scraper`, `Predictor`,
 and the `Loader`, and to wire `on_promoted`/`on_demoted` callbacks.
 
-Wave 2b adds `TimerManager` (`backend.modules.timer.manager`) to that
-wiring alongside the `LeaderElection` Wave 1 already built. `AutomationEngine`,
-`Scraper`, `Predictor`, and the `Loader` don't exist yet as of this wave —
-this file leaves a clearly marked extension point below for whichever wave
-adds them; wire them into `on_promoted`/`on_demoted` the same way
-`timer_manager` is wired here.
+Wave 2b added `TimerManager` (`backend.modules.timer.manager`) to that
+wiring alongside the `LeaderElection` Wave 1 already built. Wave 3b adds the
+`Loader` (Wave 2a built it but never wired it into the app lifecycle —
+without this, `routers/integrations.py`'s `loader.get_instance(...)` calls
+would always see an empty registry) plus the auth/RBAC/integrations/
+overlays/settings routers and the `/ws/*` WebSocket routes.
+`AutomationEngine`, `Scraper`, and `Predictor` still don't exist in the app
+lifecycle as of this wave — wire them into `on_promoted`/`on_demoted` the
+same way `timer_manager`/`loader` are wired here.
 
 Run with (per Appendix B.1 — exactly 1 worker per pod):
 
@@ -32,11 +35,18 @@ from backend.core.db import check_db_connection, engine, get_db
 from backend.core.redis import check_redis_connection, redis_client
 from backend.core.security import validate_prompter_token
 from backend.core.settings import settings
+from backend.loader import Loader
 from backend.modules.leader import LeaderElection
 from backend.modules.timer.manager import TimerManager
+from backend.routers.auth import router as auth_router
+from backend.routers.integrations import router as integrations_router
+from backend.routers.overlays import router as overlays_router
+from backend.routers.settings import router as settings_router
 from backend.routers.teams import router as teams_router
 from backend.routers.timers import get_timer_or_404
 from backend.routers.timers import router as timers_router
+from backend.routers.ws import manager as ws_manager
+from backend.routers.ws import router as ws_router
 from backend.schemas.health import HealthResponse, ReadyResponse
 
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -57,28 +67,32 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     Verifies DB/Redis connectivity (best-effort; never crash per Appendix
     A.10), exposes them on `app.state`, and runs leader election + the
-    `TimerManager` (only the leader instantiates/runs it — plan §3.1/§5.1).
+    `TimerManager`/`Loader` (only the leader instantiates/runs them — plan
+    §3.1/§5.1/§5.2). The WS `ConnectionManager`'s Redis fan-out runs on every
+    node regardless of leadership (see comment below).
 
     ─────────────────────────────────────────────────────────────────────
     EXTENSION POINT for later waves (do NOT add business logic elsewhere):
-    add `Loader`, `AutomationEngine`, `Scraper`, `Predictor` the same way
-    `timer_manager` is wired below — instantiate them here, append their
-    `.start()`/`.stop()` calls to `on_promoted`/`on_demoted`, and (for the
-    Loader) call `load_all()`/`teardown_all()` at the appropriate points:
+    add `AutomationEngine`, `Scraper`, `Predictor` the same way
+    `timer_manager`/`loader` are wired below — instantiate them here, append
+    their `.start()`/`.stop()` calls to `on_promoted`/`on_demoted`:
 
-        from backend.loader import Loader
         from backend.modules.automation.engine import AutomationEngine
         from backend.modules.scraper.scraper import Scraper
         from backend.modules.predictor.predictor import Predictor
 
-        loader = Loader(...)
         engine_ = AutomationEngine(...)
         scraper = Scraper(...)
         predictor = Predictor(...)
 
         # then extend on_promoted/on_demoted below with:
-        #   await loader.load_all(); await engine_.start(); ...
-        #   await engine_.stop(); ...; await loader.teardown_all()
+        #   await engine_.start(); await scraper.start(); await predictor.start()
+        #   await engine_.stop(); await scraper.stop(); await predictor.stop()
+        #
+        # Once Predictor is wired, also set (so /ws/prompter's
+        # `high_potential` flag lookup works):
+        #   app.state.predictor = predictor  # in on_promoted
+        #   app.state.predictor = None       # in on_demoted
     ─────────────────────────────────────────────────────────────────────
     """
     db_ok = await check_db_connection()
@@ -92,24 +106,41 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
 
     timer_manager = TimerManager(redis_client)
+    loader = Loader(redis_client)
     # Deliberately NOT set on `app.state` here — only the leader runs
-    # TimerManager (plan §3.1/§5.1). `app.state.timer_manager` is set in
-    # `on_promoted` and cleared in `on_demoted` below so that
-    # `backend.routers.timers._require_timer_manager`'s 503 ("not the
-    # current leader") is actually reachable on a passive node instead of
-    # finding a constructed-but-never-started manager with an empty config
-    # cache (which previously surfaced as a misleading 404).
+    # TimerManager/Loader (plan §3.1/§5.1/§5.2). `app.state.timer_manager`/
+    # `app.state.loader` are set in `on_promoted` and cleared in
+    # `on_demoted` below so that `backend.routers.timers._require_timer_manager`'s
+    # 503 ("not the current leader") and `/ws/prompter/{entity_id}`'s
+    # equivalent close code are actually reachable on a passive node instead
+    # of finding a constructed-but-never-started manager with an empty
+    # config cache (which previously surfaced as a misleading 404/empty
+    # registry).
     app.state.timer_manager = None
+    app.state.loader = None
+
+    # WS ConnectionManager's background Redis pub/sub fan-out runs on every
+    # node (both leader and passive pods forward `qecomp:events` messages to
+    # their own connected WebSocket clients) — unlike TimerManager/Loader,
+    # it holds no leader-only state, so it starts/stops with the app itself
+    # rather than with promotion/demotion.
+    ws_manager.get_timer_manager = lambda: app.state.timer_manager
+    ws_manager.get_predictor = lambda: getattr(app.state, "predictor", None)
+    await ws_manager.start()
 
     leader = LeaderElection(redis_client, port=settings.APP_PORT)
 
     async def on_promoted() -> None:
         await timer_manager.start()
         app.state.timer_manager = timer_manager
+        await loader.load_all()
+        app.state.loader = loader
 
     async def on_demoted() -> None:
         app.state.timer_manager = None
+        app.state.loader = None
         await timer_manager.stop()
+        await loader.teardown_all()
 
     leader.on_promoted = on_promoted
     leader.on_demoted = on_demoted
@@ -118,24 +149,33 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
-    # Shutdown. Split-brain protection (plan §3.1): tear down TimerManager
-    # (and any other leader-only service) BEFORE releasing the Redis leader
-    # lock. `LeaderElection.stop()` releases the lock unconditionally and
-    # does NOT invoke `on_demoted` — that callback only fires from the
+    # Shutdown. Split-brain protection (plan §3.1): tear down TimerManager/
+    # Loader (and any other leader-only service) BEFORE releasing the Redis
+    # leader lock. `LeaderElection.stop()` releases the lock unconditionally
+    # and does NOT invoke `on_demoted` — that callback only fires from the
     # election loop's renewal-failure/RedisError branches — so calling
     # `leader.stop()` first would let a standby node acquire the lock and
-    # start its own TimerManager while this node's tick loops/pub-sub
-    # listeners are still mid-cancellation, causing two TimerManagers to
+    # start its own TimerManager/Loader while this node's tick loops/
+    # pub-sub listeners are still mid-cancellation, causing duplicates to
     # run concurrently and double-publish `qecomp:events`.
     app.state.timer_manager = None
+    app.state.loader = None
     try:
         await timer_manager.stop()
     except Exception:
         logger.exception("Error stopping TimerManager during shutdown")
     try:
+        await loader.teardown_all()
+    except Exception:
+        logger.exception("Error tearing down Loader during shutdown")
+    try:
         await leader.stop()
     except Exception:
         logger.exception("Error stopping leader election during shutdown")
+    try:
+        await ws_manager.stop()
+    except Exception:
+        logger.exception("Error stopping WS ConnectionManager during shutdown")
     try:
         await redis_client.aclose()
     except Exception:
@@ -189,6 +229,11 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=http_status, content=payload.model_dump())
 
     app.include_router(teams_router)
+    app.include_router(auth_router)
+    app.include_router(integrations_router)
+    app.include_router(overlays_router)
+    app.include_router(settings_router)
+    app.include_router(ws_router)
 
     @app.get("/prompter/{entity_id}", response_class=HTMLResponse, tags=["prompter"])
     async def serve_prompter(

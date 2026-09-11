@@ -27,6 +27,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.db import get_db
+from backend.core.dependencies import require_permission as _real_require_permission
 from backend.core.redis import get_redis
 from backend.core.security import generate_prompter_token
 from backend.models.timer import PrompterCue, TimerInstance
@@ -51,20 +52,15 @@ router = APIRouter(prefix="/api/v1/timers", tags=["timers"])
 
 
 def _require_permission(permission: str):
-    """Returns a `Depends()`-compatible no-op check for `permission`.
+    """Wave 3b: delegates to the real RBAC dependency in
+    `backend/core/dependencies.py`. Kept as a local wrapper (rather than
+    switching every route below to `Depends(require_permission(...))`
+    directly) so this router's diff against earlier waves stays limited to
+    this one function body, per the coordinator's "wire into every existing
+    placeholder extension point ... without touching unrelated routers'
+    business logic" instruction."""
 
-    TODO(Wave 3 / RBAC, plan §13): replace the body of `_check` with a real
-    session/JWT/API-key permission check (see
-    `backend/core/dependencies.py`'s documented extension point). Every
-    route below already passes the exact permission string required by plan
-    §11's API table, so swapping this implementation is the only change
-    needed here.
-    """
-
-    async def _check() -> None:
-        return None
-
-    return Depends(_check)
+    return Depends(_real_require_permission(permission))
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
