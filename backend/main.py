@@ -4,12 +4,14 @@ Per §C.2, this is the ONLY file permitted to import and instantiate
 `LeaderElection`, `AutomationEngine`, `TimerManager`, `Scraper`, `Predictor`,
 and the `Loader`, and to wire `on_promoted`/`on_demoted` callbacks.
 
-Wave 2b adds `TimerManager` (`backend.modules.timer.manager`) to that
-wiring alongside the `LeaderElection` Wave 1 already built. `AutomationEngine`,
-`Scraper`, `Predictor`, and the `Loader` don't exist yet as of this wave —
-this file leaves a clearly marked extension point below for whichever wave
-adds them; wire them into `on_promoted`/`on_demoted` the same way
-`timer_manager` is wired here.
+Wave 2b added `TimerManager` (`backend.modules.timer.manager`) to that
+wiring alongside the `LeaderElection` Wave 1 already built. Wave 3a
+(Automation Engine) adds the `Loader` (`backend.loader`) and
+`AutomationEngine` (`backend.modules.automation.engine`) the same way:
+instantiated here, started/stopped from `on_promoted`/`on_demoted`, exposed
+on `app.state` only while this node is the leader. `Scraper` and
+`Predictor` still don't exist as of this wave — the extension point for
+those remains below.
 
 Run with (per Appendix B.1 — exactly 1 worker per pod):
 
@@ -28,12 +30,16 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.db import check_db_connection, engine, get_db
+from backend.core.db import async_session_factory, check_db_connection, engine, get_db
 from backend.core.redis import check_redis_connection, redis_client
 from backend.core.security import validate_prompter_token
 from backend.core.settings import settings
+from backend.loader import Loader
+from backend.modules.automation.engine import AutomationEngine
 from backend.modules.leader import LeaderElection
 from backend.modules.timer.manager import TimerManager
+from backend.routers.automations import router as automations_router
+from backend.routers.scripts import router as scripts_router
 from backend.routers.teams import router as teams_router
 from backend.routers.timers import get_timer_or_404
 from backend.routers.timers import router as timers_router
@@ -57,28 +63,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     Verifies DB/Redis connectivity (best-effort; never crash per Appendix
     A.10), exposes them on `app.state`, and runs leader election + the
-    `TimerManager` (only the leader instantiates/runs it — plan §3.1/§5.1).
+    `TimerManager` / `Loader` / `AutomationEngine` (only the leader
+    instantiates/runs these — plan §3.1/§5.1).
 
     ─────────────────────────────────────────────────────────────────────
     EXTENSION POINT for later waves (do NOT add business logic elsewhere):
-    add `Loader`, `AutomationEngine`, `Scraper`, `Predictor` the same way
-    `timer_manager` is wired below — instantiate them here, append their
-    `.start()`/`.stop()` calls to `on_promoted`/`on_demoted`, and (for the
-    Loader) call `load_all()`/`teardown_all()` at the appropriate points:
+    add `Scraper`, `Predictor` the same way `timer_manager`/`loader`/
+    `automation_engine` are wired below — instantiate them here, append
+    their `.start()`/`.stop()` calls to `on_promoted`/`on_demoted`:
 
-        from backend.loader import Loader
-        from backend.modules.automation.engine import AutomationEngine
         from backend.modules.scraper.scraper import Scraper
         from backend.modules.predictor.predictor import Predictor
 
-        loader = Loader(...)
-        engine_ = AutomationEngine(...)
         scraper = Scraper(...)
         predictor = Predictor(...)
-
-        # then extend on_promoted/on_demoted below with:
-        #   await loader.load_all(); await engine_.start(); ...
-        #   await engine_.stop(); ...; await loader.teardown_all()
     ─────────────────────────────────────────────────────────────────────
     """
     db_ok = await check_db_connection()
@@ -92,24 +90,38 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
 
     timer_manager = TimerManager(redis_client)
-    # Deliberately NOT set on `app.state` here — only the leader runs
-    # TimerManager (plan §3.1/§5.1). `app.state.timer_manager` is set in
-    # `on_promoted` and cleared in `on_demoted` below so that
-    # `backend.routers.timers._require_timer_manager`'s 503 ("not the
+    loader = Loader(redis_client, async_session_factory)
+    automation_engine = AutomationEngine(redis_client, async_session_factory)
+    # Deliberately NOT set on `app.state` here — only the leader runs these
+    # (plan §3.1/§5.1). They're set in `on_promoted` and cleared in
+    # `on_demoted` below so that `backend.routers.timers._require_timer_manager`
+    # / `backend.routers.automations._require_engine`'s 503 ("not the
     # current leader") is actually reachable on a passive node instead of
     # finding a constructed-but-never-started manager with an empty config
     # cache (which previously surfaced as a misleading 404).
     app.state.timer_manager = None
+    app.state.automation_engine = None
 
     leader = LeaderElection(redis_client, port=settings.APP_PORT)
 
     async def on_promoted() -> None:
+        # Loader first: AutomationEngine's `service`/`target_tag` actions
+        # resolve entities exclusively via `backend.loader.get_instance()`/
+        # `get_instances_by_tag()` (plan §C.5 rule 4), so integration
+        # instances must be live before the engine starts processing
+        # `qecomp:events`.
+        await loader.load_all()
         await timer_manager.start()
+        await automation_engine.start()
         app.state.timer_manager = timer_manager
+        app.state.automation_engine = automation_engine
 
     async def on_demoted() -> None:
         app.state.timer_manager = None
+        app.state.automation_engine = None
+        await automation_engine.stop()
         await timer_manager.stop()
+        await loader.teardown_all()
 
     leader.on_promoted = on_promoted
     leader.on_demoted = on_demoted
@@ -118,20 +130,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
-    # Shutdown. Split-brain protection (plan §3.1): tear down TimerManager
-    # (and any other leader-only service) BEFORE releasing the Redis leader
-    # lock. `LeaderElection.stop()` releases the lock unconditionally and
-    # does NOT invoke `on_demoted` — that callback only fires from the
-    # election loop's renewal-failure/RedisError branches — so calling
-    # `leader.stop()` first would let a standby node acquire the lock and
-    # start its own TimerManager while this node's tick loops/pub-sub
-    # listeners are still mid-cancellation, causing two TimerManagers to
-    # run concurrently and double-publish `qecomp:events`.
+    # Shutdown. Split-brain protection (plan §3.1): tear down every
+    # leader-only service BEFORE releasing the Redis leader lock.
+    # `LeaderElection.stop()` releases the lock unconditionally and does NOT
+    # invoke `on_demoted` — that callback only fires from the election
+    # loop's renewal-failure/RedisError branches — so calling `leader.stop()`
+    # first would let a standby node acquire the lock and start its own
+    # TimerManager/AutomationEngine/Loader while this node's tick loops/
+    # pub-sub listeners/integration clients are still mid-teardown, causing
+    # duplicate `qecomp:events` publishers and dual-command integration
+    # conflicts (ATEM/OSC/Spotify).
     app.state.timer_manager = None
+    app.state.automation_engine = None
+    try:
+        await automation_engine.stop()
+    except Exception:
+        logger.exception("Error stopping AutomationEngine during shutdown")
     try:
         await timer_manager.stop()
     except Exception:
         logger.exception("Error stopping TimerManager during shutdown")
+    try:
+        await loader.teardown_all()
+    except Exception:
+        logger.exception("Error tearing down Loader instances during shutdown")
     try:
         await leader.stop()
     except Exception:
@@ -224,6 +246,8 @@ def create_app() -> FastAPI:
         return HTMLResponse(content=html)
 
     app.include_router(timers_router)
+    app.include_router(automations_router)
+    app.include_router(scripts_router)
 
     return app
 

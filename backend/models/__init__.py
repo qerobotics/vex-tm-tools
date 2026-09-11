@@ -7,7 +7,7 @@ Import every model module here so that `Base.metadata` (from
 from backend.core.db import Base  # noqa: F401
 
 from backend.models.audit import AuditLog  # noqa: F401
-from backend.models.automation import Automation, AutomationFolder, Script  # noqa: F401
+from backend.models.automation import Automation, AutomationFolder, AutomationRun, Script  # noqa: F401
 from backend.models.integration import IntegrationInstance, ZerosPreset  # noqa: F401
 from backend.models.overlay import OverlayInstance  # noqa: F401
 from backend.models.settings import ApiKey, RolePermission, SystemSetting  # noqa: F401
@@ -19,6 +19,7 @@ __all__ = [
     "AuditLog",
     "Automation",
     "AutomationFolder",
+    "AutomationRun",
     "Script",
     "IntegrationInstance",
     "ZerosPreset",
