@@ -50,9 +50,22 @@ async def db_engine():
 
 @pytest.fixture
 async def client():
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+    from backend.core.dependencies import ALL_PERMISSIONS, CurrentPrincipal, get_current_principal
+
+    # This file tests CRUD/business logic, not RBAC itself (that's covered
+    # by `tests/test_core/test_rbac.py`) — bypass auth with an
+    # all-permissions principal so requests here don't need a real
+    # session/API key.
+    async def _override_get_current_principal():
+        return CurrentPrincipal(subject="test-admin", permissions={ALL_PERMISSIONS})
+
+    app.dependency_overrides[get_current_principal] = _override_get_current_principal
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
+    finally:
+        app.dependency_overrides.pop(get_current_principal, None)
 
 
 @pytest.fixture

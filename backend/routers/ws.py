@@ -1,0 +1,439 @@
+"""WebSocket routes (plan §11 "WebSocket Channels" / Appendix C.2 `ws.py`).
+
+Owns `ConnectionManager` (frozen public API, plan §C.2) and the three
+WebSocket endpoints: `/ws/events`, `/ws/prompter/{entity_id}`,
+`/ws/overlay/{entity_id}`.
+
+Per §C.2: may import `backend/core/` (Redis pub/sub), `backend/loader`
+(entity_id / field_set_id resolution), `backend/models/` (validating the
+prompter token, resolving bound timer/overlay instances). Must NOT import
+`modules/automation/`, `modules/timer/`, `modules/scraper/`, or integration
+modules — the running `TimerManager` instance is reached only via
+`request.app.state.timer_manager` (set by `main.py`, same pattern
+`routers/timers.py` already uses), treated here as a duck-typed `Any` so
+this module never imports `backend.modules.timer.manager`.
+"""
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import json
+import logging
+import time
+from collections import defaultdict
+from typing import Any, Callable
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from sqlalchemy import select
+
+from backend import loader
+from backend.core.db import async_session_factory
+from backend.core.redis import redis_client
+from backend.core.security import validate_prompter_token
+from backend.models.overlay import OverlayInstance
+from backend.models.timer import PrompterCue, TimerInstance
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["websocket"])
+
+EVENTS_CHANNEL = "qecomp:events"
+TIMER_EVENT_TYPES = {"timer_started", "timer_milestone", "timer_finished", "timer_stopped"}
+
+#: Bookkeeping bucket key for `/ws/events` connections (not entity-scoped,
+#: but `ConnectionManager.connect`/`disconnect`'s frozen signature always
+#: takes an entity_id — this sentinel keeps every connection symmetric).
+EVENTS_BUCKET = "__events__"
+
+# WebSocket close codes (RFC 6455 range 4000-4999 is free for application use).
+WS_CLOSE_POLICY_VIOLATION = 4003  # invalid/missing prompter token
+WS_CLOSE_SERVICE_UNAVAILABLE = 4013  # TimerManager not running on this node (not leader)
+
+
+class ConnectionManager:
+    """Frozen public API (plan §C.2):
+
+        async def connect(self, entity_id: str, ws: WebSocket) -> None
+        async def disconnect(self, entity_id: str, ws: WebSocket) -> None
+        async def broadcast(self, entity_id: str, message: dict) -> None
+        async def broadcast_all(self, message: dict) -> None
+
+    Also owns the single background task that subscribes to
+    `qecomp:events` and fans messages out to the right connected clients —
+    every WebSocket route registered below shares one Redis subscription
+    rather than each opening its own.
+    """
+
+    def __init__(self, redis: Any = None) -> None:
+        self._redis = redis if redis is not None else redis_client
+        self._by_entity: dict[str, set[WebSocket]] = defaultdict(set)
+        self._all: set[WebSocket] = set()
+        self._pubsub_task: asyncio.Task | None = None
+        self._shutdown = asyncio.Event()
+
+        # Set by `main.py` (mirroring how `routers/timers.py` reaches the
+        # leader-only `TimerManager` via `app.state.timer_manager`) so this
+        # module never imports `backend.modules.timer.manager` directly.
+        self.get_timer_manager: Callable[[], Any] | None = None
+        # Same pattern for the (optional) Predictor singleton — used only to
+        # read the sanitized boolean flag via `get_flag()`, never the raw
+        # `match_prediction` event body (see predictor.py's module docstring
+        # on predicted-score leakage).
+        self.get_predictor: Callable[[], Any] | None = None
+
+    # ── Frozen public API ────────────────────────────────────────────
+
+    async def connect(self, entity_id: str, ws: WebSocket) -> None:
+        await ws.accept()
+        self._by_entity[entity_id].add(ws)
+        self._all.add(ws)
+
+    async def disconnect(self, entity_id: str, ws: WebSocket) -> None:
+        bucket = self._by_entity.get(entity_id)
+        if bucket is not None:
+            bucket.discard(ws)
+            if not bucket:
+                self._by_entity.pop(entity_id, None)
+        self._all.discard(ws)
+
+    async def broadcast(self, entity_id: str, message: dict) -> None:
+        dead: list[WebSocket] = []
+        for ws in list(self._by_entity.get(entity_id, ())):
+            try:
+                await ws.send_json(message)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            await self.disconnect(entity_id, ws)
+
+    async def broadcast_all(self, message: dict) -> None:
+        dead: list[WebSocket] = []
+        for ws in list(self._all):
+            try:
+                await ws.send_json(message)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self._all.discard(ws)
+            for bucket in self._by_entity.values():
+                bucket.discard(ws)
+
+    # ── Lifecycle (started/stopped from main.py's lifespan) ──────────
+
+    async def start(self) -> None:
+        self._shutdown.clear()
+        self._pubsub_task = asyncio.create_task(self._listen())
+
+    async def stop(self) -> None:
+        self._shutdown.set()
+        if self._pubsub_task is not None:
+            self._pubsub_task.cancel()
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                await self._pubsub_task
+            self._pubsub_task = None
+
+    # ── Internal: Redis pub/sub fan-out ───────────────────────────────
+
+    async def _listen(self) -> None:
+        pubsub = self._redis.pubsub()
+        try:
+            await pubsub.subscribe(EVENTS_CHANNEL)
+            while not self._shutdown.is_set():
+                try:
+                    message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("Error reading from %s pub/sub", EVENTS_CHANNEL)
+                    await asyncio.sleep(1)
+                    continue
+                if message is None:
+                    continue
+                try:
+                    data = json.loads(message["data"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                try:
+                    await self._dispatch(data)
+                except Exception:
+                    logger.exception("Error dispatching event to WebSocket clients: %r", data)
+        finally:
+            with contextlib.suppress(Exception):
+                await pubsub.unsubscribe(EVENTS_CHANNEL)
+                await pubsub.aclose()
+
+    async def _dispatch(self, data: dict[str, Any]) -> None:
+        # /ws/events: every event, verbatim (Dashboard / Field Monitor /
+        # Match Control / Audit Log live feed).
+        await self.broadcast_all(data)
+
+        event_type = data.get("type")
+        entity_id = data.get("entity_id")
+
+        if event_type in TIMER_EVENT_TYPES and entity_id:
+            await self._dispatch_timer_state(entity_id, event_type, data)
+        elif event_type == "fieldMatchAssigned":
+            await self._dispatch_upcoming_match(data)
+
+    async def _dispatch_timer_state(self, entity_id: str, event_type: str, data: dict[str, Any]) -> None:
+        """Translates a raw `timer_*` event (whose payload varies by type,
+        see `TimerManager._publish`) into the full state snapshot
+        `prompter.html` expects (`{phase, running, elapsed, remaining, ...}`)
+        by re-reading `TimerManager.get_state()` on the leader node."""
+        if self.get_timer_manager is None:
+            return
+        manager = self.get_timer_manager()
+        if manager is None:
+            return
+        state = manager.get_state(entity_id)
+        if not state:
+            return
+        await self.broadcast(
+            entity_id,
+            {
+                "entity_id": entity_id,
+                "entity_tags": data.get("entity_tags", []),
+                "type": event_type,
+                "timestamp": time.time(),
+                "payload": state,
+            },
+        )
+
+    async def _dispatch_upcoming_match(self, data: dict[str, Any]) -> None:
+        """On `fieldMatchAssigned`, push a sanitized `upcoming_match` message
+        (plan §C.4's `redTeams`/`blueTeams`/`matchNum`/`round`, plus a
+        `high_potential` bool — NEVER `predicted_red`/`predicted_blue`, per
+        `predictor.py`'s module docstring) to every Timer/Overlay instance
+        bound to the firing field.
+        """
+        payload = data.get("payload", {}) or {}
+        field_id = payload.get("fieldID")
+        if field_id is None:
+            return
+
+        field_set_id = self._resolve_field_set_id(data.get("entity_id"))
+        high_potential = self._resolve_high_potential(payload)
+
+        upcoming_match = {
+            "matchNum": payload.get("matchNum"),
+            "round": payload.get("round"),
+            "redTeams": payload.get("redTeams", []),
+            "blueTeams": payload.get("blueTeams", []),
+            "high_potential": high_potential,
+        }
+
+        async with async_session_factory() as session:
+            timer_result = await session.execute(select(TimerInstance).where(TimerInstance.field_id == field_id))
+            timer_rows = list(timer_result.scalars().all())
+            overlay_result = await session.execute(select(OverlayInstance))
+            overlay_rows = list(overlay_result.scalars().all())
+
+        for row in timer_rows:
+            if field_set_id is not None and row.field_set_id != field_set_id:
+                continue
+            await self.broadcast(
+                row.entity_id,
+                {
+                    "entity_id": row.entity_id,
+                    "entity_tags": list(row.tags or []),
+                    "type": "upcoming_match",
+                    "timestamp": time.time(),
+                    "payload": upcoming_match,
+                },
+            )
+
+        if field_set_id is not None:
+            for row in overlay_rows:
+                if row.field_set_id != field_set_id:
+                    continue
+                await self.broadcast(
+                    row.entity_id,
+                    {
+                        "entity_id": row.entity_id,
+                        "entity_tags": list(row.tags or []),
+                        "type": "upcoming_match",
+                        "timestamp": time.time(),
+                        "payload": upcoming_match,
+                    },
+                )
+
+    def _resolve_field_set_id(self, tm_entity_id: str | None) -> int | None:
+        """Best-effort lookup of the firing `vex_tm` instance's
+        `field_set_id` via the Loader's public API (plan §B.5) — same
+        degradation pattern as `TimerManager._resolve_field_set_id`: falls
+        back to matching on `field_id` alone if unavailable."""
+        if not tm_entity_id:
+            return None
+        try:
+            instance = loader.get_instance(tm_entity_id)
+        except Exception:
+            return None
+        if instance is None:
+            return None
+        config = getattr(instance, "config", {}) or {}
+        return config.get("field_set_id")
+
+    def _resolve_high_potential(self, payload: dict[str, Any]) -> bool:
+        """Reads only the sanitized boolean flag from the (optional)
+        Predictor singleton — never the raw `match_prediction` event body."""
+        if self.get_predictor is None:
+            return False
+        predictor = self.get_predictor()
+        if predictor is None:
+            return False
+        match_num = payload.get("matchNum")
+        division_id = payload.get("divisionId")
+        if match_num is None or division_id is None:
+            return False
+        try:
+            from backend.modules.predictor.predictor import match_id_for
+
+            flag = predictor.get_flag(match_id_for(division_id, match_num))
+        except Exception:
+            return False
+        return bool(flag)
+
+
+manager = ConnectionManager()
+
+
+# ── /ws/events ────────────────────────────────────────────────────────
+
+
+@router.websocket("/ws/events")
+async def ws_events(websocket: WebSocket) -> None:
+    await manager.connect(EVENTS_BUCKET, websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await manager.disconnect(EVENTS_BUCKET, websocket)
+
+
+# ── /ws/prompter/{entity_id} ──────────────────────────────────────────
+
+
+async def _cues_snapshot(entity_id: str) -> dict[str, Any]:
+    """Active/next cue for the prompter's "cues" message. `PrompterCue` has
+    no explicit "currently active pointer" column (plan §8) — this uses the
+    simplest reasonable interpretation available from the existing schema:
+    the first two `is_active` cues in `sort_order`. A richer "advance to
+    next cue" pointer is a UI/product decision left to Wave 4's Timers page,
+    which can push an explicit active cue id instead once designed.
+    """
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(PrompterCue)
+            .where(PrompterCue.timer_entity_id == entity_id, PrompterCue.is_active.is_(True))
+            .order_by(PrompterCue.sort_order, PrompterCue.created_at)
+        )
+        rows = list(result.scalars().all())
+    active = rows[0] if rows else None
+    nxt = rows[1] if len(rows) > 1 else None
+    return {
+        "active": {"id": str(active.id), "content": active.content, "type": active.type} if active else None,
+        "next": {"id": str(nxt.id), "content": nxt.content, "type": nxt.type} if nxt else None,
+    }
+
+
+@router.websocket("/ws/prompter/{entity_id}")
+async def ws_prompter(websocket: WebSocket, entity_id: str) -> None:
+    token = websocket.query_params.get("token", "")
+
+    async with async_session_factory() as session:
+        result = await session.execute(select(TimerInstance).where(TimerInstance.entity_id == entity_id))
+        row = result.scalar_one_or_none()
+
+    if row is None or not validate_prompter_token(entity_id, row.token_nonce, token):
+        await websocket.close(code=WS_CLOSE_POLICY_VIOLATION, reason="Invalid or expired teleprompter token")
+        return
+
+    timer_manager = manager.get_timer_manager() if manager.get_timer_manager else None
+    if timer_manager is None:
+        # Mirrors routers/timers.py's 503 ("TimerManager is not running on
+        # this node / not the current leader") — there's no meaningful
+        # WebSocket-level equivalent of a 503 response, so the connection is
+        # rejected outright; the client's reconnect-with-backoff (Appendix
+        # A.14, already built into prompter.html) will keep retrying until a
+        # request lands on the leader node.
+        await websocket.close(code=WS_CLOSE_SERVICE_UNAVAILABLE, reason="Not the current leader")
+        return
+
+    await manager.connect(entity_id, websocket)
+    try:
+        await websocket.send_json(
+            {
+                "entity_id": entity_id,
+                "entity_tags": list(row.tags or []),
+                "type": "timer_state",
+                "timestamp": time.time(),
+                "payload": timer_manager.get_state(entity_id),
+            }
+        )
+        await websocket.send_json(
+            {
+                "entity_id": entity_id,
+                "entity_tags": list(row.tags or []),
+                "type": "cues",
+                "timestamp": time.time(),
+                "payload": await _cues_snapshot(entity_id),
+            }
+        )
+
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                msg = json.loads(raw)
+            except ValueError:
+                continue
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("type") == "start_countdown":
+                current_manager = manager.get_timer_manager() if manager.get_timer_manager else None
+                if current_manager is None:
+                    await websocket.send_json(
+                        {
+                            "entity_id": entity_id,
+                            "entity_tags": list(row.tags or []),
+                            "type": "error",
+                            "timestamp": time.time(),
+                            "payload": {"error": "not_leader", "detail": "TimerManager is not running on this node"},
+                        }
+                    )
+                    continue
+                try:
+                    await current_manager.start_countdown(entity_id)
+                except ValueError as exc:
+                    await websocket.send_json(
+                        {
+                            "entity_id": entity_id,
+                            "entity_tags": list(row.tags or []),
+                            "type": "error",
+                            "timestamp": time.time(),
+                            "payload": {"error": "invalid_request", "detail": str(exc)},
+                        }
+                    )
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await manager.disconnect(entity_id, websocket)
+
+
+# ── /ws/overlay/{entity_id} ────────────────────────────────────────────
+
+
+@router.websocket("/ws/overlay/{entity_id}")
+async def ws_overlay(websocket: WebSocket, entity_id: str) -> None:
+    """No auth (plan Appendix A.1: "security by obscurity of the
+    entity_id"). Streams `upcoming_match`-shaped messages for the entity's
+    bound field set — see `ConnectionManager._dispatch_upcoming_match`."""
+    await manager.connect(entity_id, websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await manager.disconnect(entity_id, websocket)

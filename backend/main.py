@@ -9,7 +9,10 @@ wiring alongside the `LeaderElection` Wave 1 already built. Wave 3a
 (Automation Engine) adds the `Loader` (`backend.loader`) and
 `AutomationEngine` (`backend.modules.automation.engine`) the same way:
 instantiated here, started/stopped from `on_promoted`/`on_demoted`, exposed
-on `app.state` only while this node is the leader. `Scraper` and
+on `app.state` only while this node is the leader. Wave 3b adds the
+auth/RBAC/integrations/overlays/settings routers and the `/ws/*` WebSocket
+routes (and the `ConnectionManager`'s Redis fan-out, which runs on every
+node regardless of leadership — see comment below). `Scraper` and
 `Predictor` still don't exist as of this wave — the extension point for
 those remains below.
 
@@ -38,11 +41,17 @@ from backend.loader import Loader
 from backend.modules.automation.engine import AutomationEngine
 from backend.modules.leader import LeaderElection
 from backend.modules.timer.manager import TimerManager
+from backend.routers.auth import router as auth_router
 from backend.routers.automations import router as automations_router
+from backend.routers.integrations import router as integrations_router
+from backend.routers.overlays import router as overlays_router
 from backend.routers.scripts import router as scripts_router
+from backend.routers.settings import router as settings_router
 from backend.routers.teams import router as teams_router
 from backend.routers.timers import get_timer_or_404
 from backend.routers.timers import router as timers_router
+from backend.routers.ws import manager as ws_manager
+from backend.routers.ws import router as ws_router
 from backend.schemas.health import HealthResponse, ReadyResponse
 
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -64,7 +73,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Verifies DB/Redis connectivity (best-effort; never crash per Appendix
     A.10), exposes them on `app.state`, and runs leader election + the
     `TimerManager` / `Loader` / `AutomationEngine` (only the leader
-    instantiates/runs these — plan §3.1/§5.1).
+    instantiates/runs these — plan §3.1/§5.1/§5.2). The WS
+    `ConnectionManager`'s Redis fan-out runs on every node regardless of
+    leadership (see comment below).
 
     ─────────────────────────────────────────────────────────────────────
     EXTENSION POINT for later waves (do NOT add business logic elsewhere):
@@ -77,6 +88,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         scraper = Scraper(...)
         predictor = Predictor(...)
+
+        # then extend on_promoted/on_demoted below with:
+        #   await scraper.start(); await predictor.start()
+        #   await scraper.stop(); await predictor.stop()
+        #
+        # Once Predictor is wired, also set (so /ws/prompter's
+        # `high_potential` flag lookup works):
+        #   app.state.predictor = predictor  # in on_promoted
+        #   app.state.predictor = None       # in on_demoted
     ─────────────────────────────────────────────────────────────────────
     """
     db_ok = await check_db_connection()
@@ -93,14 +113,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     loader = Loader(redis_client, async_session_factory)
     automation_engine = AutomationEngine(redis_client, async_session_factory)
     # Deliberately NOT set on `app.state` here — only the leader runs these
-    # (plan §3.1/§5.1). They're set in `on_promoted` and cleared in
+    # (plan §3.1/§5.1/§5.2). They're set in `on_promoted` and cleared in
     # `on_demoted` below so that `backend.routers.timers._require_timer_manager`
     # / `backend.routers.automations._require_engine`'s 503 ("not the
-    # current leader") is actually reachable on a passive node instead of
-    # finding a constructed-but-never-started manager with an empty config
-    # cache (which previously surfaced as a misleading 404).
+    # current leader") and `/ws/prompter/{entity_id}`'s equivalent close code
+    # are actually reachable on a passive node instead of finding a
+    # constructed-but-never-started manager with an empty config cache
+    # (which previously surfaced as a misleading 404/empty registry).
     app.state.timer_manager = None
     app.state.automation_engine = None
+    app.state.loader = None
+
+    # WS ConnectionManager's background Redis pub/sub fan-out runs on every
+    # node (both leader and passive pods forward `qecomp:events` messages to
+    # their own connected WebSocket clients) — unlike TimerManager/Loader/
+    # AutomationEngine, it holds no leader-only state, so it starts/stops
+    # with the app itself rather than with promotion/demotion.
+    ws_manager.get_timer_manager = lambda: app.state.timer_manager
+    ws_manager.get_predictor = lambda: getattr(app.state, "predictor", None)
+    await ws_manager.start()
 
     leader = LeaderElection(redis_client, port=settings.APP_PORT)
 
@@ -115,10 +146,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await automation_engine.start()
         app.state.timer_manager = timer_manager
         app.state.automation_engine = automation_engine
+        app.state.loader = loader
 
     async def on_demoted() -> None:
         app.state.timer_manager = None
         app.state.automation_engine = None
+        app.state.loader = None
         await automation_engine.stop()
         await timer_manager.stop()
         await loader.teardown_all()
@@ -142,6 +175,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # conflicts (ATEM/OSC/Spotify).
     app.state.timer_manager = None
     app.state.automation_engine = None
+    app.state.loader = None
     try:
         await automation_engine.stop()
     except Exception:
@@ -158,6 +192,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await leader.stop()
     except Exception:
         logger.exception("Error stopping leader election during shutdown")
+    try:
+        await ws_manager.stop()
+    except Exception:
+        logger.exception("Error stopping WS ConnectionManager during shutdown")
     try:
         await redis_client.aclose()
     except Exception:
@@ -211,6 +249,11 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=http_status, content=payload.model_dump())
 
     app.include_router(teams_router)
+    app.include_router(auth_router)
+    app.include_router(integrations_router)
+    app.include_router(overlays_router)
+    app.include_router(settings_router)
+    app.include_router(ws_router)
 
     @app.get("/prompter/{entity_id}", response_class=HTMLResponse, tags=["prompter"])
     async def serve_prompter(

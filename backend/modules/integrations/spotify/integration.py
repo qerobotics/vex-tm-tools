@@ -253,6 +253,19 @@ class SpotifyIntegration(Integration):
         await self._request("POST", "/me/player/previous", params={"device_id": device_id})
         return {"ok": True}
 
+    async def _svc_browse_library(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Backs `GET /api/v1/integrations/<entity_id>/spotify/library`
+        (plan §11): a lightweight browse of the authenticated user's
+        playlists, for the Integrations page's Spotify library picker."""
+        result = await self._request("GET", "/me/playlists", params={"limit": data.get("limit", 50)})
+        items = (result or {}).get("items", [])
+        return {
+            "playlists": [
+                {"uri": item.get("uri"), "name": item.get("name"), "tracks_total": (item.get("tracks") or {}).get("total")}
+                for item in items
+            ]
+        }
+
     async def _svc_set_volume(self, data: dict[str, Any]) -> dict[str, Any]:
         volume = int(data.get("volume", 50))
         device_id = await self._resolve_device_id()

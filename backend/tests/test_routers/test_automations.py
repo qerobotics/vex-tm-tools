@@ -62,6 +62,7 @@ async def test_session_factory():
 @pytest.fixture
 async def app_and_client(test_session_factory):
     from backend.core.db import get_db
+    from backend.core.dependencies import ALL_PERMISSIONS, CurrentPrincipal, get_current_principal
     from backend.main import create_app
 
     server = fakeredis.FakeServer()
@@ -75,7 +76,15 @@ async def app_and_client(test_session_factory):
         async with test_session_factory() as session:
             yield session
 
+    # This file tests CRUD/business logic, not RBAC itself (that's covered
+    # by `tests/test_core/test_rbac.py`) — bypass auth with an
+    # all-permissions principal, matching the pattern in
+    # `tests/test_routers/test_teams.py`.
+    async def _override_get_current_principal():
+        return CurrentPrincipal(subject="test-admin", permissions={ALL_PERMISSIONS})
+
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_principal] = _override_get_current_principal
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -180,6 +189,7 @@ async def test_validate_endpoint_valid_and_invalid(app_and_client):
 
 async def test_trigger_returns_503_without_automation_engine(test_session_factory):
     from backend.core.db import get_db
+    from backend.core.dependencies import ALL_PERMISSIONS, CurrentPrincipal, get_current_principal
     from backend.main import create_app
 
     app = create_app()  # app.state.automation_engine intentionally left unset
@@ -188,7 +198,11 @@ async def test_trigger_returns_503_without_automation_engine(test_session_factor
         async with test_session_factory() as session:
             yield session
 
+    async def _override_get_current_principal():
+        return CurrentPrincipal(subject="test-admin", permissions={ALL_PERMISSIONS})
+
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_principal] = _override_get_current_principal
 
     async with test_session_factory() as session:
         row = Automation(
