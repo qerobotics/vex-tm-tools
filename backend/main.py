@@ -12,9 +12,9 @@ instantiated here, started/stopped from `on_promoted`/`on_demoted`, exposed
 on `app.state` only while this node is the leader. Wave 3b adds the
 auth/RBAC/integrations/overlays/settings routers and the `/ws/*` WebSocket
 routes (and the `ConnectionManager`'s Redis fan-out, which runs on every
-node regardless of leadership — see comment below). `Scraper` and
-`Predictor` still don't exist as of this wave — the extension point for
-those remains below.
+node regardless of leadership — see comment below). Wave 4b wires in
+`Scraper` (`backend.modules.scraper.scraper`) and `Predictor`
+(`backend.modules.predictor.predictor`) the same way.
 
 Run with (per Appendix B.1 — exactly 1 worker per pod):
 
@@ -30,7 +30,8 @@ import json
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.db import async_session_factory, check_db_connection, engine, get_db
@@ -40,6 +41,8 @@ from backend.core.settings import settings
 from backend.loader import Loader
 from backend.modules.automation.engine import AutomationEngine
 from backend.modules.leader import LeaderElection
+from backend.modules.predictor.predictor import Predictor
+from backend.modules.scraper.scraper import Scraper
 from backend.modules.timer.manager import TimerManager
 from backend.routers.auth import router as auth_router
 from backend.routers.automations import router as automations_router
@@ -55,6 +58,15 @@ from backend.routers.ws import router as ws_router
 from backend.schemas.health import HealthResponse, ReadyResponse
 
 _STATIC_DIR = Path(__file__).parent / "static"
+
+# Wave 4a's built React/Vite SPA (`frontend/`), baked into this location by
+# the Dockerfile's `frontend-builder` stage (see `Dockerfile`). Deliberately
+# absent in a bare `backend/` checkout (e.g. running `uvicorn backend.main:app`
+# straight from a venv during backend-only development) — every use below is
+# guarded on `_FRONTEND_DIST.is_dir()` so the app still boots and serves the
+# API-only surface in that case, matching this file's existing "never crash
+# on a missing optional dependency" posture (Appendix A.10).
+_FRONTEND_DIST = _STATIC_DIR / "frontend"
 
 logger = logging.getLogger(__name__)
 
@@ -78,25 +90,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     leadership (see comment below).
 
     ─────────────────────────────────────────────────────────────────────
-    EXTENSION POINT for later waves (do NOT add business logic elsewhere):
-    add `Scraper`, `Predictor` the same way `timer_manager`/`loader`/
-    `automation_engine` are wired below — instantiate them here, append
-    their `.start()`/`.stop()` calls to `on_promoted`/`on_demoted`:
-
-        from backend.modules.scraper.scraper import Scraper
-        from backend.modules.predictor.predictor import Predictor
-
-        scraper = Scraper(...)
-        predictor = Predictor(...)
-
-        # then extend on_promoted/on_demoted below with:
-        #   await scraper.start(); await predictor.start()
-        #   await scraper.stop(); await predictor.stop()
-        #
-        # Once Predictor is wired, also set (so /ws/prompter's
-        # `high_potential` flag lookup works):
-        #   app.state.predictor = predictor  # in on_promoted
-        #   app.state.predictor = None       # in on_demoted
+    Wave 4b wires `Scraper`/`Predictor` in below, the same way
+    `timer_manager`/`loader`/`automation_engine` are: instantiated here,
+    started/stopped from `on_promoted`/`on_demoted`, and (leader-only)
+    exposed on `app.state`. `app.state.predictor` is additionally what
+    `ws_manager.get_predictor` (wired below) resolves against, so
+    `/ws/prompter/{entity_id}`'s `high_potential` flag lookup only works
+    while this node is the leader — matching the passive-node semantics
+    already established for `timer_manager`/`automation_engine`.
     ─────────────────────────────────────────────────────────────────────
     """
     db_ok = await check_db_connection()
@@ -112,6 +113,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     timer_manager = TimerManager(redis_client)
     loader = Loader(redis_client, async_session_factory)
     automation_engine = AutomationEngine(redis_client, async_session_factory)
+    scraper = Scraper(redis_client, async_session_factory)
+    predictor = Predictor(redis_client, async_session_factory)
     # Deliberately NOT set on `app.state` here — only the leader runs these
     # (plan §3.1/§5.1/§5.2). They're set in `on_promoted` and cleared in
     # `on_demoted` below so that `backend.routers.timers._require_timer_manager`
@@ -123,6 +126,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.timer_manager = None
     app.state.automation_engine = None
     app.state.loader = None
+    app.state.predictor = None
 
     # WS ConnectionManager's background Redis pub/sub fan-out runs on every
     # node (both leader and passive pods forward `qecomp:events` messages to
@@ -144,14 +148,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await loader.load_all()
         await timer_manager.start()
         await automation_engine.start()
+        await scraper.start()
+        await predictor.start()
         app.state.timer_manager = timer_manager
         app.state.automation_engine = automation_engine
         app.state.loader = loader
+        app.state.predictor = predictor
 
     async def on_demoted() -> None:
         app.state.timer_manager = None
         app.state.automation_engine = None
         app.state.loader = None
+        app.state.predictor = None
+        await predictor.stop()
+        await scraper.stop()
         await automation_engine.stop()
         await timer_manager.stop()
         await loader.teardown_all()
@@ -176,6 +186,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.timer_manager = None
     app.state.automation_engine = None
     app.state.loader = None
+    app.state.predictor = None
+    try:
+        await predictor.stop()
+    except Exception:
+        logger.exception("Error stopping Predictor during shutdown")
+    try:
+        await scraper.stop()
+    except Exception:
+        logger.exception("Error stopping Scraper during shutdown")
     try:
         await automation_engine.stop()
     except Exception:
@@ -291,6 +310,33 @@ def create_app() -> FastAPI:
     app.include_router(timers_router)
     app.include_router(automations_router)
     app.include_router(scripts_router)
+
+    # Wave 4a SPA static serving — registered LAST so every API/WS/prompter
+    # route above always wins the match first; this only ever catches
+    # requests nothing else claimed. No-ops entirely if the image wasn't
+    # built with the frontend baked in (see `_FRONTEND_DIST` above), so
+    # backend-only dev/test environments are unaffected.
+    if _FRONTEND_DIST.is_dir():
+        assets_dir = _FRONTEND_DIST / "assets"
+        if assets_dir.is_dir():
+            app.mount("/assets", StaticFiles(directory=assets_dir), name="spa-assets")
+
+        _spa_index = _FRONTEND_DIST / "index.html"
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def serve_spa(full_path: str) -> FileResponse:
+            """Client-side-routing fallback for the React SPA.
+
+            Only reachable for GET requests that matched none of the routes
+            registered above (this is the last route FastAPI/Starlette
+            tries), so deep-linking or refreshing on an SPA route like
+            `/dashboard` still serves `index.html` (React Router then
+            resolves the path client-side) instead of 404ing.
+            """
+            candidate = _FRONTEND_DIST / full_path
+            if full_path and candidate.is_file():
+                return FileResponse(candidate)
+            return FileResponse(_spa_index)
 
     return app
 
