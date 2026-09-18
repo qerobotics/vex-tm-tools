@@ -101,7 +101,11 @@ async def test_session_with_permission_returns_200(client, fake_redis):
 
     resp = await client.get("/protected")
     assert resp.status_code == 200
-    assert resp.json()["subject"] == "operator1"
+    # `subject` must be the human-readable `display_name` (resolved from
+    # preferred_username/email at OIDC login time), not the raw `user_id`
+    # (the OIDC `sub` claim — an opaque value, a raw UUID for some
+    # providers like Authelia) that get_current_principal previously used.
+    assert resp.json()["subject"] == "Operator One"
 
 
 async def test_admin_local_bypasses_all_permission_checks(client, fake_redis):

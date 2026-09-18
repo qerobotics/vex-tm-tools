@@ -1,0 +1,17 @@
+# Generated secrets/keys — regenerate locally, never commit.
+authelia/.jwt_secret
+authelia/.session_secret
+authelia/.storage_encryption_key
+authelia/.oidc_hmac_secret
+authelia/.admin_password_plaintext
+authelia/.admin_password_hash
+authelia/.admin_password_hash_raw
+authelia/.oidc_client_secret_plaintext
+authelia/.oidc_client_secret_hash
+authelia/.oidc_client_secret_hash_raw
+authelia/oidc_issuer_private_key.pem
+authelia/notification.txt
+authelia/db.sqlite3
+traefik/certs/*.key
+traefik/certs/*.crt
+traefik/traefik-local-ca.pem

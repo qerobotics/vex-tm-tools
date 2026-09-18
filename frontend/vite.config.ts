@@ -16,6 +16,11 @@ const backendTarget = process.env.VITE_API_BASE_URL || 'http://localhost:8000'
 export default defineConfig({
   plugins: [react()],
   server: {
+    // Allows a local Traefik reverse proxy (local-testing/docker-compose.proxy.yml)
+    // fronting this dev server at https://vex.localhost to forward requests
+    // here — Vite 5+ rejects unrecognized Host headers by default.
+    host: true,
+    allowedHosts: ['vex.localhost', '.vex.localhost'],
     proxy: {
       '/api': { target: backendTarget, changeOrigin: true },
       '/healthz': { target: backendTarget, changeOrigin: true },

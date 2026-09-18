@@ -68,7 +68,11 @@ body {
   top: 1rem;
   z-index: 50;
   margin-bottom: 2rem;
-  width: 100%;
+  /* No explicit width: the <nav> using this class (Navbar.tsx) also
+     carries horizontal margin (mx-4/lg:mx-8) for the page gutter; a block
+     element already fills its container minus its own margins, so adding
+     `width: 100%` on top of that margin pushed the navbar past the
+     viewport edge (classic width-100%-plus-margin overflow). */
   padding: 1rem 1.5rem;
   background: var(--color-surface);
   backdrop-filter: blur(12px) saturate(160%);

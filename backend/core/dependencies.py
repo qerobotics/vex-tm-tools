@@ -104,7 +104,14 @@ async def get_current_principal(
                 if data.get("is_admin_local"):
                     permissions.add(ALL_PERMISSIONS)
                 return CurrentPrincipal(
-                    subject=data["user_id"],
+                    # `display_name` resolves to `preferred_username`/`email`
+                    # at login time (backend/routers/auth.py's OIDC callback),
+                    # falling back to the raw `sub` claim only if neither is
+                    # present. Using `user_id` (always the raw `sub`) here
+                    # instead shows every OIDC provider's opaque subject
+                    # identifier — e.g. Authelia's UUID — in the UI instead
+                    # of a human-readable name.
+                    subject=data.get("display_name") or data["user_id"],
                     permissions=permissions,
                     is_admin_local=bool(data.get("is_admin_local")),
                 )

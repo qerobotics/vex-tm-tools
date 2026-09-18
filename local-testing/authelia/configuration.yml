@@ -1,0 +1,114 @@
+---
+# Local dev Authelia instance for QEComp, fronted by Traefik at
+# https://authelia.vex.localhost. Not for production use.
+#
+# Secrets referenced below are supplied via the `_FILE`-suffixed env vars
+# in local-testing/docker-compose.proxy.yml (pointing at the generated files in
+# this directory) rather than being embedded in this file directly.
+
+theme: light
+
+server:
+  address: "tcp://:9091"
+
+log:
+  level: info
+
+totp:
+  disable: false
+  issuer: qecomp.vex.localhost
+
+# No real SMTP server locally — write notifications (e.g. the 2FA/reset
+# links) to disk instead. Tail local-testing/authelia/notification.txt to read them.
+notifier:
+  filesystem:
+    filename: /config/data/notification.txt
+
+authentication_backend:
+  file:
+    path: /config/users_database.yml
+    password:
+      algorithm: bcrypt
+
+access_control:
+  default_policy: one_factor
+  rules:
+    - domain: "authelia.vex.localhost"
+      policy: bypass
+      resources:
+        - "^/api/.*"
+    - domain: "*.vex.localhost"
+      policy: one_factor
+
+session:
+  cookies:
+    - domain: vex.localhost
+      authelia_url: "https://authelia.vex.localhost"
+      default_redirection_url: "https://vex.localhost"
+      name: authelia_session
+      expiration: 1h
+      inactivity: 15m
+
+regulation:
+  max_retries: 5
+  find_time: 2m
+  ban_time: 5m
+
+storage:
+  local:
+    path: /config/data/db.sqlite3
+
+identity_providers:
+  oidc:
+    # HMAC secret, issuer signing key, and clients[].secret are all
+    # supplied via AUTHELIA_IDENTITY_PROVIDERS_OIDC_*_FILE env vars.
+    cors:
+      endpoints:
+        - authorization
+        - token
+        - revocation
+        - introspection
+        - userinfo
+      allowed_origins:
+        - "https://vex.localhost"
+    # By default Authelia keeps the ID token minimal (sub/iss/aud/exp/...)
+    # and only exposes profile/email/groups via the userinfo endpoint —
+    # QEComp's backend (backend/routers/auth.py OIDCClient.validate_id_token)
+    # only ever decodes the ID token itself, never calls userinfo, so
+    # without this policy `claims.get("preferred_username")` / `.get("email")`
+    # / `.get(settings.OIDC_GROUPS_CLAIM)` are always empty — the UI shows
+    # the raw `sub` UUID instead of a name, and every OIDC login gets zero
+    # permissions since no group is ever resolved.
+    claims_policies:
+      qecomp_policy:
+        id_token:
+          - email
+          - email_verified
+          - preferred_username
+          - groups
+          - name
+    clients:
+      - client_id: qecomp
+        client_name: "QEComp"
+        claims_policy: qecomp_policy
+        # A pbkdf2 digest (one-way hash, safe to store in this file — same
+        # idea as the bcrypt hashes in users_database.yml), generated via:
+        #   docker run --rm authelia/authelia:latest authelia crypto hash generate pbkdf2 --password '<secret>'
+        # The plaintext secret goes into QEComp's own OIDC_CLIENT_SECRET
+        # env var (local-testing/README.md documents the actual local value); only
+        # its digest lives here. Per-list-item `_FILE` env var overrides
+        # (`..._CLIENTS_0_SECRET_FILE`) are not supported by Authelia's
+        # config-env mapping, so this can't be injected via a mounted
+        # secret file the way the top-level OIDC/session secrets are.
+        client_secret: "$pbkdf2-sha512$310000$/Bf4agzwwj3/dz5xFBkGOw$HhgecdJEQ9D5JS1SjcAWGr8.Jgtw/4p5jDQojD8X5gCQkrbsFL62671n2VPrLF6yNbV1XAD66rGJ1p.1C5UUbw"
+        public: false
+        authorization_policy: one_factor
+        redirect_uris:
+          - "https://vex.localhost/auth/callback"
+        scopes:
+          - openid
+          - profile
+          - email
+          - groups
+        userinfo_signed_response_alg: none
+        token_endpoint_auth_method: client_secret_post
