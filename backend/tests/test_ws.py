@@ -26,6 +26,7 @@ from backend.core.security import generate_prompter_token
 from backend.core.settings import settings
 from backend.main import app
 from backend.models.timer import TimerInstance
+from backend.routers.auth import ADMIN_LOCAL_USER_ID
 
 
 def _postgres_reachable() -> bool:
@@ -62,6 +63,16 @@ requires_infra = pytest.mark.skipif(
 @requires_infra
 def test_ws_events_receives_published_event():
     with TestClient(app) as client:
+        # `/ws/events` requires an authenticated session (see
+        # `routers/ws.py::_ws_is_authenticated`) — log in as `admin_local`
+        # first so the session cookie rides along on the WS handshake,
+        # same as a real browser tab that's already logged in.
+        login = client.post(
+            "/admin_login",
+            data={"username": ADMIN_LOCAL_USER_ID, "password": settings.ADMIN_LOCAL_PASSWORD},
+        )
+        assert login.status_code == 200
+
         with client.websocket_connect("/ws/events") as ws:
             r = redis_sync.Redis.from_url(settings.REDIS_URL, decode_responses=True)
             marker = uuid.uuid4().hex
@@ -84,6 +95,16 @@ def test_ws_events_receives_published_event():
                     assert received["type"] == "test_event"
                     return
             pytest.fail("Did not receive the published test event on /ws/events")
+
+
+@requires_infra
+def test_ws_events_rejects_unauthenticated_connection():
+    """Regression test: `/ws/events` must not accept a connection with no
+    session cookie at all — see `routers/ws.py::_ws_is_authenticated`."""
+    with TestClient(app) as client:
+        with pytest.raises(Exception):
+            with client.websocket_connect("/ws/events"):
+                pass
 
 
 @requires_infra

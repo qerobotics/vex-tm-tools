@@ -8,13 +8,12 @@ started once by `main.py`'s lifespan and reached here via
 validates input, calls `TimerManager` / does simple CRUD via the DB session,
 and returns a response — no business logic is embedded here.
 
-RBAC (plan §13) is NOT implemented by this wave. Wave 3 owns the real
-`require_permission` dependency (see `backend/core/dependencies.py`'s
-documented extension point). `_require_permission()` below is a clearly
-structured placeholder `Depends()` factory: every route already calls it
-with the exact permission string from plan §11's table, so Wave 3 can swap
-its body for a real session/JWT/API-key check without touching any route
-signature.
+RBAC (plan §13) is implemented via `backend/core/dependencies.py`'s real
+`require_permission` dependency. `_require_permission()` below is a thin
+local wrapper around it — every route calls it with the exact permission
+string from plan §11's table — kept only so this router's `Depends()`
+call sites stay one level of indirection from `core/dependencies.py`
+rather than importing `require_permission` directly at every route.
 """
 from __future__ import annotations
 
@@ -50,17 +49,12 @@ import time
 router = APIRouter(prefix="/api/v1/timers", tags=["timers"])
 
 
-# ── Placeholder RBAC extension point (Wave 3 replaces this) ─────────────
+# ── RBAC helper ───────────────────────────────────────────────────────
 
 
 def _require_permission(permission: str):
-    """Wave 3b: delegates to the real RBAC dependency in
-    `backend/core/dependencies.py`. Kept as a local wrapper (rather than
-    switching every route below to `Depends(require_permission(...))`
-    directly) so this router's diff against earlier waves stays limited to
-    this one function body, per the coordinator's "wire into every existing
-    placeholder extension point ... without touching unrelated routers'
-    business logic" instruction."""
+    """Thin local wrapper around the real RBAC dependency in
+    `backend/core/dependencies.py`."""
 
     return Depends(_real_require_permission(permission))
 

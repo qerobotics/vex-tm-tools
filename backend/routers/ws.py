@@ -324,8 +324,38 @@ manager = ConnectionManager()
 # ── /ws/events ────────────────────────────────────────────────────────
 
 
+async def _ws_is_authenticated(websocket: WebSocket) -> bool:
+    """Resolves whether `/ws/events` carries a valid session cookie,
+    mirroring `_ws_has_prompter_control`'s cookie-branch of
+    `dependencies.get_current_principal` (no API-key branch — a browser
+    `WebSocket` cannot set an `Authorization` header on the handshake, so a
+    session cookie is the only credential a WS client can ever present).
+
+    `/ws/events` fans out the raw event bus to several pages gated behind
+    different REST permissions (Dashboard, Field Monitor, Match Control,
+    Timers, and the `settings:edit`-only Live Event Bus debug view), so
+    this only requires *some* valid, non-expired session rather than one
+    specific permission — matching every other `require_permission(...)`
+    check in this codebase, which 401s on "no session" before ever
+    evaluating which permission is missing. Page-level permission gating
+    (e.g. `DebugEventBus.tsx` requiring `settings:edit`) stays the
+    frontend's responsibility, same as which nav links are shown.
+    """
+    cookie_value = websocket.cookies.get(SESSION_COOKIE_NAME)
+    if not cookie_value:
+        return False
+    session_id = unsign_session_id(cookie_value)
+    if session_id is None:
+        return False
+    data = await get_session(redis_client, session_id)
+    return data is not None
+
+
 @router.websocket("/ws/events")
 async def ws_events(websocket: WebSocket) -> None:
+    if not await _ws_is_authenticated(websocket):
+        await websocket.close(code=WS_CLOSE_POLICY_VIOLATION, reason="Authentication required")
+        return
     await manager.connect(EVENTS_BUCKET, websocket)
     try:
         while True:
