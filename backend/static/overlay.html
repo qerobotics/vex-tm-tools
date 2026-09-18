@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<!--
+  Standalone OBS overlay page (plan §5.14 / Appendix A.4, A.6, B.3).
+
+  Per Appendix B.3, this is NOT part of the React SPA — a standalone HTML +
+  vanilla JS page, no build step, served directly by FastAPI at
+  GET /overlay/{entity_id}. The server is expected to:
+
+    1. Read this file's bytes once at import time (mirroring
+       `backend/main.py`'s `_PROMPTER_HTML` pattern).
+    2. JSON-encode and substitute the `"__ENTITY_ID__"` placeholder below
+       with the `entity_id` path parameter.
+    3. Return the result as an `HTMLResponse`.
+
+  Per Appendix A.1/A.15 there is NO auth on this page or its WebSocket —
+  "security by obscurity of the entity_id" is the accepted model, since the
+  URL is only ever pasted into an OBS Browser Source, not exposed to
+  end users.
+
+  Canvas is fixed at 1920x1080 (Appendix B.3: "designed for 1920x1080,
+  document in OBS setup guide") — OBS Browser Sources render a page at a
+  fixed pixel size, so this page does not attempt to be responsive.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>QEComp Overlay</title>
+<style>
+  /* Appendix A.6: "no background or logo when no match is queued" — the
+     page itself must be fully transparent so OBS composites straight
+     through to the underlying stream layers. */
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 1920px;
+    height: 1080px;
+    background: transparent;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+  }
+
+  #stage {
+    position: relative;
+    width: 1920px;
+    height: 1080px;
+    background: transparent;
+  }
+
+  /* ── Grid layouts (Appendix A.4) ──────────────────────────────────────
+     VEX V5 (4 teams): 2x2 grid, red alliance (first 2 teams) on the LEFT,
+     blue alliance (last 2 teams) on the RIGHT, colour-coded borders.
+     VEX IQ (2 teams): 2x1 side-by-side, no alliance colour coding. */
+  #grid {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    gap: 24px;
+    padding: 48px;
+    opacity: 0;
+    transition: opacity 500ms ease;
+    /* No pointer interaction — this is a passive video overlay. */
+    pointer-events: none;
+  }
+  #grid.visible { opacity: 1; }
+
+  /* Programme-specific grid-template-* is set via a JS-toggled class
+     rather than inline styles, so the 500ms fade transition above applies
+     uniformly regardless of layout. */
+  #grid.programme-v5 {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+  #grid.programme-iq {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr;
+  }
+
+  .team-cell {
+    position: relative;
+    border-radius: 20px;
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.35);
+    border: 6px solid rgba(255, 255, 255, 0.25);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  .team-cell.alliance-red { border-color: #e63946; }
+  .team-cell.alliance-blue { border-color: #457bff; }
+
+  .team-cell video,
+  .team-cell .placeholder {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .team-cell .placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(20, 20, 20, 0.55);
+    color: rgba(255, 255, 255, 0.35);
+    font-size: 28px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .team-label {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    padding: 18px 20px;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.78) 0%, rgba(0, 0, 0, 0) 100%);
+    color: #ffffff;
+    text-align: center;
+    box-sizing: border-box;
+  }
+
+  .team-label .team-name {
+    display: block;
+    font-size: 34px;
+    font-weight: 700;
+    line-height: 1.2;
+    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+  }
+
+  .team-label .team-number {
+    display: block;
+    margin-top: 4px;
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    color: rgba(255, 255, 255, 0.85);
+    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="grid"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ── Server-injected config (plan Appendix B.3) ──────────────────────
+  // Same pattern as prompter.html: the backend route serving this file at
+  // GET /overlay/{entity_id} JSON-encodes and substitutes this placeholder.
+  // Falling back to reading it from the URL keeps this page directly
+  // openable during development without a templating server.
+  var CONFIG = {
+    entityId: "__ENTITY_ID__"
+  };
+
+  function fallbackFromUrl() {
+    var path = window.location.pathname.split("/").filter(Boolean);
+    var idx = path.indexOf("overlay");
+    if (CONFIG.entityId === "__ENTITY_ID__" && idx !== -1 && path[idx + 1]) {
+      CONFIG.entityId = decodeURIComponent(path[idx + 1]);
+    }
+  }
+  fallbackFromUrl();
+
+  var gridEl = document.getElementById("grid");
+
+  //: Default per-cell label template (Appendix A.6). Per-overlay-instance
+  // configurability is out of scope for this pass (`overlay_instances` has
+  // no label-template column yet) — see the audit report's follow-up note.
+  function renderLabelTemplate(team) {
+    var name = (team && (team.team_name || team.name)) || "";
+    var number = (team && (team.team_number || team.number)) || "";
+    return { name: name, number: number };
+  }
+
+  // Accepts either a bare team-number string (legacy/unenriched shape) or
+  // the enriched `{team_number, team_name, robot_name, rank, awards}`
+  // object shape (plan §5.10/§7 — the same contract `ws.py`'s
+  // `_dispatch_upcoming_match` enriches `redTeams`/`blueTeams` with).
+  function normalizeTeam(team, videoUrlsByNumber) {
+    var obj = (typeof team === "string") ? { team_number: team } : (team || {});
+    var number = obj.team_number || obj.number || "";
+    var videoUrl = videoUrlsByNumber ? videoUrlsByNumber[number] : null;
+    return {
+      team_number: number,
+      team_name: obj.team_name || obj.name || null,
+      video_url: videoUrl || obj.video_url || null
+    };
+  }
+
+  function buildCell(team, allianceClass) {
+    var cell = document.createElement("div");
+    cell.className = "team-cell" + (allianceClass ? " " + allianceClass : "");
+
+    if (team.video_url) {
+      var video = document.createElement("video");
+      video.src = team.video_url;
+      video.autoplay = true;
+      video.loop = true;
+      video.muted = true;
+      video.playsInline = true;
+      cell.appendChild(video);
+    } else {
+      var placeholder = document.createElement("div");
+      placeholder.className = "placeholder";
+      placeholder.textContent = team.team_number || "";
+      cell.appendChild(placeholder);
+    }
+
+    var label = renderLabelTemplate(team);
+    var labelEl = document.createElement("div");
+    labelEl.className = "team-label";
+
+    var nameEl = document.createElement("span");
+    nameEl.className = "team-name";
+    nameEl.textContent = label.name;
+
+    var numberEl = document.createElement("span");
+    numberEl.className = "team-number";
+    numberEl.textContent = label.number;
+
+    labelEl.appendChild(nameEl);
+    labelEl.appendChild(numberEl);
+    cell.appendChild(labelEl);
+
+    return cell;
+  }
+
+  // ── Video pre-buffering (plan §5.14 step 3/4) ──────────────────────────
+  // Requests presigned URLs for every team in the match from the existing
+  // `GET /api/v1/teams/batch/videos` endpoint (teams.py) before rendering,
+  // so cells that DO have a processed video render it immediately rather
+  // than flashing a placeholder first. No auth header is sent — this page
+  // has none per Appendix A.1 — so this only works against a deployment
+  // where that endpoint's `teams:read` permission is satisfied by an
+  // unauthenticated/public reader; if not, video cells gracefully fall
+  // back to the placeholder box below (never throws).
+  function fetchVideoUrls(teamNumbers) {
+    if (!teamNumbers.length) return Promise.resolve({});
+    var qs = encodeURIComponent(teamNumbers.join(","));
+    return fetch("/api/v1/teams/batch/videos?teams=" + qs, { credentials: "same-origin" })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("batch/videos " + resp.status);
+        return resp.json();
+      })
+      .then(function (data) {
+        return (data && data.videos) || {};
+      })
+      .catch(function () {
+        // No video pipeline reachable (auth, network, or none configured
+        // yet) — every cell below falls back to its placeholder box.
+        return {};
+      });
+  }
+
+  var fadeTimer = null;
+
+  function clearGrid() {
+    // Appendix A.6: fade OUT (500ms) when the match is cleared, then leave
+    // the page fully empty — no placeholder, no logo, fully transparent.
+    gridEl.classList.remove("visible");
+    if (fadeTimer) window.clearTimeout(fadeTimer);
+    fadeTimer = window.setTimeout(function () {
+      gridEl.innerHTML = "";
+      gridEl.className = "";
+    }, 500);
+  }
+
+  function renderMatch(payload) {
+    if (!payload) {
+      clearGrid();
+      return;
+    }
+    var redRaw = payload.redTeams || [];
+    var blueRaw = payload.blueTeams || [];
+    var allNumbers = redRaw.concat(blueRaw).map(function (t) {
+      return (typeof t === "string") ? t : (t && (t.team_number || t.number)) || "";
+    }).filter(Boolean);
+
+    if (!allNumbers.length) {
+      clearGrid();
+      return;
+    }
+
+    fetchVideoUrls(allNumbers).then(function (videoUrlsByNumber) {
+      if (fadeTimer) { window.clearTimeout(fadeTimer); fadeTimer = null; }
+
+      var red = redRaw.map(function (t) { return normalizeTeam(t, videoUrlsByNumber); });
+      var blue = blueRaw.map(function (t) { return normalizeTeam(t, videoUrlsByNumber); });
+      var teamCount = red.length + blue.length;
+
+      // Appendix A.4: programme type auto-detected from team count.
+      // 4 teams -> VEX V5 (2x2, alliance colour-coded). 2 teams -> VEX IQ
+      // (2x1, no alliance colours). Anything else is rendered as an
+      // uncoloured N-up row rather than dropped, in case a future
+      // programme/format sends a different count.
+      gridEl.innerHTML = "";
+      gridEl.classList.remove("visible");
+
+      if (teamCount === 4) {
+        gridEl.className = "programme-v5";
+        red.forEach(function (team) { gridEl.appendChild(buildCell(team, "alliance-red")); });
+        blue.forEach(function (team) { gridEl.appendChild(buildCell(team, "alliance-blue")); });
+      } else if (teamCount === 2) {
+        gridEl.className = "programme-iq";
+        red.concat(blue).forEach(function (team) { gridEl.appendChild(buildCell(team, "")); });
+      } else {
+        gridEl.className = "";
+        gridEl.style.gridTemplateColumns = "repeat(" + teamCount + ", 1fr)";
+        gridEl.style.gridTemplateRows = "1fr";
+        red.concat(blue).forEach(function (team) { gridEl.appendChild(buildCell(team, "")); });
+      }
+
+      // Appendix A.6: fade IN (500ms) when new team cells load for a new
+      // match. Force a reflow before adding the class so the transition
+      // actually runs (the element was just populated this tick).
+      // eslint-disable-next-line no-unused-expressions
+      gridEl.offsetHeight;
+      gridEl.classList.add("visible");
+    });
+  }
+
+  // ── WebSocket connection with exponential backoff reconnect ───────────
+  // (Appendix A.14: 1s, 2s, 4s, 8s, 16s, capped at 30s. Native WebSocket,
+  // no framework — plan Appendix B.3.) No "Reconnecting..." banner is
+  // rendered here (unlike prompter.html) — Appendix A.6 requires this page
+  // to show nothing at all when it has no match data, and a disconnected
+  // overlay simply keeps showing (or fades to) the transparent empty
+  // state, which is the correct on-stream behaviour.
+  var RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000];
+  var reconnectAttempt = 0;
+  var ws = null;
+
+  function wsUrl() {
+    var proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return proto + "//" + window.location.host + "/ws/overlay/" + encodeURIComponent(CONFIG.entityId);
+  }
+
+  function connect() {
+    try {
+      ws = new WebSocket(wsUrl());
+    } catch (err) {
+      scheduleReconnect();
+      return;
+    }
+
+    ws.onopen = function () {
+      reconnectAttempt = 0;
+    };
+
+    ws.onmessage = function (event) {
+      var msg;
+      try {
+        msg = JSON.parse(event.data);
+      } catch (err) {
+        return;
+      }
+      handleMessage(msg);
+    };
+
+    ws.onclose = function () {
+      scheduleReconnect();
+    };
+
+    ws.onerror = function () {
+      // onclose fires right after onerror for WebSocket; reconnect is
+      // scheduled there to avoid double-scheduling.
+    };
+  }
+
+  function scheduleReconnect() {
+    var delay = RECONNECT_DELAYS[Math.min(reconnectAttempt, RECONNECT_DELAYS.length - 1)];
+    reconnectAttempt += 1;
+    window.setTimeout(connect, delay);
+  }
+
+  // Handles an EventBusMessage-shaped WS payload
+  // ({entity_id, entity_tags, type, timestamp, payload}) as pushed by
+  // `ConnectionManager._dispatch_upcoming_match` in ws.py.
+  function handleMessage(msg) {
+    if (!msg || typeof msg !== "object") return;
+    var type = msg.type;
+    var payload = msg.payload || msg;
+
+    switch (type) {
+      case "upcoming_match":
+        renderMatch(payload);
+        break;
+      case "match_cleared":
+        renderMatch(null);
+        break;
+      default:
+        // Unknown/forward-compatible message type — ignore.
+        break;
+    }
+  }
+
+  connect();
+
+  // Expose internals for manual/automated testing without a live WS server.
+  window.__overlayTestHooks = {
+    handleMessage: handleMessage,
+    renderMatch: renderMatch,
+    normalizeTeam: normalizeTeam
+  };
+})();
+</script>
+</body>
+</html>

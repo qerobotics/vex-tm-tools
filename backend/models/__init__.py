@@ -1,0 +1,33 @@
+"""SQLAlchemy ORM models.
+
+Import every model module here so that `Base.metadata` (from
+`backend.core.db`) is fully populated for Alembic autogenerate and for
+`Base.metadata.create_all()` in tests.
+"""
+from backend.core.db import Base  # noqa: F401
+
+from backend.models.audit import AuditLog  # noqa: F401
+from backend.models.automation import Automation, AutomationFolder, AutomationRun, Script  # noqa: F401
+from backend.models.integration import IntegrationInstance, ZerosPreset  # noqa: F401
+from backend.models.overlay import OverlayInstance  # noqa: F401
+from backend.models.settings import ApiKey, RolePermission, SystemSetting  # noqa: F401
+from backend.models.team import TeamProfile  # noqa: F401
+from backend.models.timer import PrompterCue, TimerInstance  # noqa: F401
+
+__all__ = [
+    "Base",
+    "AuditLog",
+    "Automation",
+    "AutomationFolder",
+    "AutomationRun",
+    "Script",
+    "IntegrationInstance",
+    "ZerosPreset",
+    "OverlayInstance",
+    "ApiKey",
+    "RolePermission",
+    "SystemSetting",
+    "TeamProfile",
+    "PrompterCue",
+    "TimerInstance",
+]

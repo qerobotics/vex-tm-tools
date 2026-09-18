@@ -1,0 +1,20 @@
+# Non-secret configuration (plan §15 / Appendix B.1). Everything sensitive
+# (DSNs with credentials, OIDC client secret, encryption/signing keys, the
+# local emergency admin password) lives in a Secret instead — see the
+# `secretKeyRef` entries in deployment.yaml, which reference a Secret named
+# `qecomp-secrets` that this manifest set does NOT create (provisioned
+# out-of-band by the cluster operator per Appendix A.9's "manual kubectl
+# apply, no CI/CD" decision).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qecomp-config
+  namespace: qecomp
+data:
+  # backend/core/settings.py field names, verified against the actual
+  # Settings class rather than copied from the plan's prose.
+  OIDC_GROUPS_CLAIM: "groups"
+  S3_BUCKET: "qecomp"
+  S3_REGION: "us-east-1"
+  S3_ENDPOINT_URL: "http://qecomp-minio:9000"
+  APP_PORT: "8000"

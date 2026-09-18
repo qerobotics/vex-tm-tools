@@ -1,0 +1,37 @@
+services:
+  play:
+    description: "Resume/start playback, optionally on a given context."
+    fields:
+      context_uri:
+        type: string
+        required: false
+  play_playlist_track:
+    description: "Play a track from a playlist by 1-based position, or a random track if omitted."
+    fields:
+      playlist_uri:
+        type: string
+        required: true
+      track_number:
+        type: integer
+        required: false
+  play_track:
+    description: "Play a specific track URI, optionally seeking to a start time."
+    fields:
+      track_uri:
+        type: string
+        required: true
+      start_time_s:
+        type: number
+        required: false
+  pause:
+    description: "Pause playback."
+  next:
+    description: "Skip to the next track."
+  previous:
+    description: "Skip to the previous track."
+  set_volume:
+    description: "Set playback volume (0-100)."
+    fields:
+      volume:
+        type: integer
+        required: true

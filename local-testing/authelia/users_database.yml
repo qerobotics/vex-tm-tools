@@ -1,0 +1,13 @@
+---
+# Local dev user database for Authelia (file-based authentication backend).
+# Not for production use — see local-testing/authelia/README.md for how the admin
+# password was generated and how to add more users.
+users:
+  admin:
+    disabled: false
+    displayname: "QEComp Admin"
+    password: "$2b$12$7MuCN3Rw8Z5byNJIYLhNa.y3hNfDT8W7fcW/nqP8ol.D9YiOiRVhu"
+    email: admin@vex.localhost
+    groups:
+      - qecomp-admin
+      - admins

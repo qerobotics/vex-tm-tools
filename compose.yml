@@ -7,16 +7,84 @@ services:
       - cf
     restart: unless-stopped
     
-  vex-tm-manager-tools:
-    container_name: vex-tm-manager-tools
+  # ─────────────────────────────────────────────────────────────────────
+  # QEComp (FastAPI/Postgres/Redis/MinIO stack). Replaces the legacy Flask
+  # app previously deployed here (`vex-tm-manager-tools`, removed per plan
+  # §16's legacy-deletion table alongside `server.py`/`main.py`/etc). Bring
+  # up the full local dev stack with:
+  #   docker compose up -d
+  # or just the infra (if running the backend directly via uvicorn/a venv
+  # for faster iteration) with:
+  #   docker compose up -d postgres redis minio
+  # ─────────────────────────────────────────────────────────────────────
+  app:
+    container_name: qecomp-app
     build:
       context: .
       dockerfile: Dockerfile
     networks:
       cf:
         ipv4_address: 10.65.1.20
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    container_name: qecomp-postgres
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: qecomp
+      POSTGRES_PASSWORD: qecomp
+      POSTGRES_DB: qecomp
+    ports:
+      - "5433:5432"
     volumes:
-      - ".:/srv/vtmt"
+      - qecomp_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qecomp -d qecomp"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    container_name: qecomp-redis
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  minio:
+    container_name: qecomp-minio
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - qecomp_minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 
 networks:
@@ -25,3 +93,7 @@ networks:
     ipam:
      config:
        - subnet: 10.65.1.0/24
+
+volumes:
+  qecomp_postgres_data:
+  qecomp_minio_data:

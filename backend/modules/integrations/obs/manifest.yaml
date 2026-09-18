@@ -1,0 +1,18 @@
+domain: obs
+name: "OBS Studio"
+version: "1.0.0"
+description: "OBS scene/hotkey control via obs-websocket (protocol v5, OBS 28+)."
+requires_oauth: false
+config_schema:
+  host:
+    type: string
+    label: "OBS Host"
+    secret: false
+  port:
+    type: integer
+    label: "OBS WebSocket Port"
+    secret: false
+  password:
+    type: string
+    label: "OBS WebSocket Password"
+    secret: true

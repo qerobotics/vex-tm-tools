@@ -1,0 +1,161 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --primary-color: #52525b;
+  --secondary-color: #27272a;
+  --highlight-color: #f5f5f5;
+  --accent-color: #d4d4d8;
+  --background-start: #000000;
+  --color-bg-elevated: #0b0b0b;
+  --color-surface: rgba(8, 8, 8, 0.43);
+  --color-surface-strong: rgba(11, 11, 11, 0.95);
+  --color-surface-subtle: rgba(20, 24, 40, 0.38);
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.18);
+  --color-text: #e5e7eb;
+  --color-text-strong: #f5f5f5;
+  --color-text-muted: #9ca3af;
+  --color-text-subtle: #6b7280;
+  --color-link: #d4d4d8;
+  --color-link-hover: #ffffff;
+  --color-success: #86efac;
+  --color-danger: #fca5a5;
+  --shadow-card: 0 8px 24px 0 rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  --shadow-card-hover: 0 10px 28px 0 rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  --shadow-glass: 0 10px 30px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  --shadow-glass-hover: 0 14px 34px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  --shadow-chip: 0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-chip-hover: 0 6px 16px rgba(255, 255, 255, 0.12);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: var(--background-start);
+  color: var(--color-text);
+  overflow-y: scroll;
+}
+
+/* vmd1.dev Glassmorphism Cards */
+.vmd-card {
+  background: var(--color-surface);
+  backdrop-filter: blur(10px) saturate(155%);
+  -webkit-backdrop-filter: blur(10px) saturate(155%);
+  border: 1px solid var(--color-border);
+  border-radius: 20px;
+  padding: 1.5rem;
+  box-shadow: var(--shadow-card);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.vmd-card:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* Glass Navbar */
+.vmd-navbar {
+  position: sticky !important;
+  top: 1rem;
+  z-index: 50;
+  margin-bottom: 2rem;
+  /* No explicit width: the <nav> using this class (Navbar.tsx) also
+     carries horizontal margin (mx-4/lg:mx-8) for the page gutter; a block
+     element already fills its container minus its own margins, so adding
+     `width: 100%` on top of that margin pushed the navbar past the
+     viewport edge (classic width-100%-plus-margin overflow). */
+  padding: 1rem 1.5rem;
+  background: var(--color-surface);
+  backdrop-filter: blur(12px) saturate(160%);
+  border: 1px solid var(--color-border);
+  border-radius: 20px;
+  box-shadow: var(--shadow-card);
+}
+
+/* Animated Navbar Link & Label */
+.navbar-anim-link {
+  position: relative;
+  overflow: visible;
+  display: flex;
+  align-items: center;
+  padding-left: 0.5rem;
+}
+.navbar-anim-link .nav-label {
+  opacity: 0;
+  max-width: 0;
+  margin-left: 0;
+  white-space: nowrap;
+  transition: opacity 0.25s, max-width 0.25s, margin-left 0.25s;
+  color: #e0e0e0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  pointer-events: none;
+}
+.navbar-anim-link.active .nav-label,
+.navbar-anim-link:hover .nav-label,
+.navbar-anim-link:focus .nav-label {
+  opacity: 1;
+  max-width: 140px;
+  margin-left: 0.4rem;
+  pointer-events: auto;
+}
+.navbar-anim-link i,
+.navbar-anim-link svg {
+  transition: transform 0.25s;
+}
+.navbar-anim-link:hover i,
+.navbar-anim-link:hover svg,
+.navbar-anim-link:focus i,
+.navbar-anim-link:focus svg {
+  transform: translateX(-0.12rem);
+}
+
+/* Interactive Chips / Status Badges */
+.vmd-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 9999px;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-chip);
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.vmd-chip:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-chip-hover);
+}
+
+/* Code Snippets & YAML Editor */
+.vmd-code-block {
+  background: var(--color-bg-elevated) !important;
+  border: 1px solid var(--color-border);
+  border-radius: 0.9rem;
+  padding: 1.1rem;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Scrollbar tuning for the dark theme */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 8px;
+}

@@ -1,0 +1,76 @@
+# Dynamic Traefik config: routes to services that run on the HOST (Vite
+# dev server + uvicorn), not inside this compose stack, reached via Docker
+# Desktop's `host.docker.internal`. Authelia itself is discovered via
+# Docker labels (see local-testing/docker-compose.proxy.yml), not here.
+
+http:
+  middlewares:
+    authelia-forwardauth:
+      forwardAuth:
+        address: "http://authelia:9091/api/verify?rd=https://authelia.vex.localhost"
+        trustForwardHeader: true
+        authResponseHeaders:
+          - Remote-User
+          - Remote-Groups
+          - Remote-Name
+          - Remote-Email
+
+  routers:
+    # Backend-bound paths under vex.localhost go STRAIGHT to the backend,
+    # bypassing the Vite dev server's own proxy for these same paths
+    # (frontend/vite.config.ts). Vite's proxy sets `changeOrigin: true`,
+    # which rewrites the outgoing Host header to `localhost:8000` — fine
+    # when Vite itself is the public origin, but wrong here: the backend
+    # would then build OIDC redirect_uris and cookie domains against
+    # `localhost:8000` instead of the real public host, breaking the
+    # Authelia login round-trip. Routing these paths directly at the
+    # Traefik layer instead preserves the real `Host: vex.localhost`
+    # header, matching the production single-origin design (plan Appendix
+    # A.9/B.10) where a real ingress does this same path-based split.
+    # Higher `priority` than the catch-all SPA router below so it wins.
+    qecomp-app-backend-paths:
+      rule: "Host(`vex.localhost`) && (PathPrefix(`/api`) || PathPrefix(`/auth`) || PathPrefix(`/admin_login`) || PathPrefix(`/ws`) || PathPrefix(`/prompter`) || PathPrefix(`/overlay`) || Path(`/healthz`) || Path(`/readyz`))"
+      entryPoints: ["websecure"]
+      service: qecomp-backend
+      tls: {}
+      priority: 100
+
+    # QEComp SPA — everything else under vex.localhost (client-side
+    # routes, static assets, HMR websocket) goes to the Vite dev server.
+    qecomp-app:
+      rule: "Host(`vex.localhost`)"
+      entryPoints: ["websecure"]
+      service: qecomp-frontend
+      tls: {}
+      priority: 1
+
+    # Direct backend access (OpenAPI docs, curling the API without the
+    # SPA in the way) at a separate subdomain — this is the "everything
+    # else" under *.vex.localhost the app itself doesn't need in
+    # production but is convenient for local dev.
+    qecomp-api:
+      rule: "Host(`api.vex.localhost`)"
+      entryPoints: ["websecure"]
+      service: qecomp-backend
+      tls: {}
+
+    # Traefik's own dashboard, protected by Authelia (forward-auth) as a
+    # working example of the same pattern the real app would use if it
+    # ever needed a second Authelia-protected internal tool.
+    traefik-dashboard:
+      rule: "Host(`traefik.vex.localhost`)"
+      entryPoints: ["websecure"]
+      service: api@internal
+      tls: {}
+      middlewares:
+        - authelia-forwardauth
+
+  services:
+    qecomp-frontend:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:5173"
+    qecomp-backend:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:8000"

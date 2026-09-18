@@ -1,0 +1,13 @@
+services:
+  switch_scene:
+    description: "Switch the current program scene."
+    fields:
+      scene_name:
+        type: string
+        required: true
+  trigger_hotkey:
+    description: "Trigger a named OBS hotkey."
+    fields:
+      hotkey_name:
+        type: string
+        required: true

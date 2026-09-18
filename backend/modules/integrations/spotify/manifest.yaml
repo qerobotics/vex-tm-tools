@@ -1,0 +1,18 @@
+domain: spotify
+name: "Spotify"
+version: "1.0.0"
+description: "Spotify playback control (PKCE browser auth)"
+requires_oauth: true
+config_schema:
+  client_id:
+    type: string
+    label: "Spotify Client ID"
+    secret: false
+  client_secret:
+    type: string
+    label: "Spotify Client Secret"
+    secret: true
+  device_name:
+    type: string
+    label: "Playback Device Name"
+    secret: false
