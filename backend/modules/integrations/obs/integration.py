@@ -33,7 +33,6 @@ from backend.modules.integrations.base import Integration
 logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = 4455  # obs-websocket protocol v5 default (OBS 28+); 4444 is legacy v4.
-STATUS_KEY_TMPL = "qecomp:integration:{entity_id}:status"
 SCENES_KEY_TMPL = "qecomp:integration:{entity_id}:scenes"
 
 
@@ -126,8 +125,15 @@ class ObsIntegration(Integration):
         # disconnects — mark DEGRADED and best-effort reconnect in the
         # background; the loader's own retry loop covers the case where this
         # never recovers.
-        with contextlib.suppress(Exception):
-            await self._redis.set(STATUS_KEY_TMPL.format(entity_id=self.entity_id), "DEGRADED")
+        #
+        # Uses the base class's `report_status()` (not a direct Redis write)
+        # so the loader's own in-memory bookkeeping — the backing store for
+        # the frozen `get_instance_status()` API — is updated too. A direct
+        # write here previously left `get_instance_status()` stuck at
+        # whatever the loader last set at `setup()` time, silently
+        # diverging from what Redis actually held for a self-detected
+        # OBS reconnect/degrade.
+        await self.report_status("DEGRADED")
         if self._obs is not None:
             try:
                 await asyncio.to_thread(self._obs.reconnect)
@@ -137,8 +143,7 @@ class ObsIntegration(Integration):
                 return
             # Reconnect succeeded — clear the DEGRADED status so the loader's
             # CONNECTED status (set when setup() first ran) isn't left stuck.
-            with contextlib.suppress(Exception):
-                await self._redis.set(STATUS_KEY_TMPL.format(entity_id=self.entity_id), "CONNECTED")
+            await self.report_status("CONNECTED")
 
     async def get_state(self) -> dict[str, Any]:
         return {

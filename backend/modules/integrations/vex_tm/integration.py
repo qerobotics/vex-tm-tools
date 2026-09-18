@@ -39,7 +39,7 @@ import httpx
 import websockets
 
 from backend.core.exceptions import IntegrationError
-from backend.modules.integrations.base import Integration
+from backend.modules.integrations.base import STATUS_KEY_TMPL, Integration
 from backend.schemas.events import EventBusMessage
 
 logger = logging.getLogger(__name__)
@@ -160,7 +160,7 @@ class VexTmIntegration(Integration):
 
     async def get_state(self) -> dict[str, Any]:
         try:
-            status = await self._redis.get(f"qecomp:integration:{self.entity_id}:status") or "DISCONNECTED"
+            status = await self._redis.get(STATUS_KEY_TMPL.format(entity_id=self.entity_id)) or "DISCONNECTED"
         except Exception:
             status = "UNKNOWN"
         return {

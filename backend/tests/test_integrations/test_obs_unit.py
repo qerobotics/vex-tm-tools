@@ -214,6 +214,41 @@ async def test_connection_closed_stays_degraded_when_reconnect_fails(redis_clien
         await integration.teardown()
 
 
+async def test_self_detected_reconnect_reports_through_loader_status_hook(redis_client):
+    """Regression test: a self-detected mid-session reconnect/degrade must
+    go through `Integration.report_status()` (which calls the loader's
+    `_status_hook` when one is set) rather than writing to Redis directly —
+    otherwise the loader's own in-memory bookkeeping (the backing store for
+    the frozen `get_instance_status()` API) never learns about it, even
+    though Redis itself is updated correctly (as the tests above confirm).
+    """
+    integration = ObsIntegration("obs.test", _make_config(), redis_client, None)
+
+    reported: list[tuple[str, str]] = []
+
+    async def fake_hook(entity_id: str, status: str) -> None:
+        reported.append((entity_id, status))
+
+    integration._status_hook = fake_hook
+
+    await integration.setup()
+    try:
+        SetCurrentProgramScene.fail_with = obs_exceptions.MessageTimeout("no reply")
+        with pytest.raises(IntegrationError):
+            await integration.call_service("switch_scene", {"scene_name": "BRB"})
+
+        # DEGRADED (on the connection error) then CONNECTED (once the
+        # background reconnect succeeds) must both have been reported
+        # through the hook — a caller relying solely on
+        # `loader.get_instance_status()` (not reading Redis directly) must
+        # see the same transitions Redis records.
+        assert ("obs.test", "DEGRADED") in reported
+        assert ("obs.test", "CONNECTED") in reported
+    finally:
+        SetCurrentProgramScene.fail_with = None
+        await integration.teardown()
+
+
 async def test_get_state_reports_current_scene(redis_client):
     integration = ObsIntegration("obs.test", _make_config(), redis_client, None)
     await integration.setup()

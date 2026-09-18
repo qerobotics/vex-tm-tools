@@ -30,7 +30,7 @@ import httpx
 
 from backend.core.exceptions import IntegrationError
 from backend.core.security import decrypt, encrypt
-from backend.modules.integrations.base import Integration
+from backend.modules.integrations.base import STATUS_KEY_TMPL, Integration
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,14 @@ class SpotifyIntegration(Integration):
 
         self._tasks = [asyncio.create_task(self._playback_poll_loop())]
         if self._refresh_token:
-            self._tasks.append(asyncio.create_task(self._refresh_loop()))
+            initial_refresh_task = asyncio.create_task(self._refresh_loop())
+            # Tagged the same way `set_oauth_tokens()` tags its own
+            # replacement refresh task below — without this, a later
+            # `set_oauth_tokens()` call (re-auth via the PKCE flow) can't
+            # find this task to cancel it, leaving two `_refresh_loop`
+            # coroutines running concurrently against the same token state.
+            initial_refresh_task._qecomp_kind = "refresh"  # type: ignore[attr-defined]
+            self._tasks.append(initial_refresh_task)
 
     async def teardown(self) -> None:
         try:
@@ -117,9 +124,21 @@ class SpotifyIntegration(Integration):
             )
         self._cached_state["authenticated"] = True
 
-        for task in self._tasks:
-            if getattr(task, "_qecomp_kind", None) == "refresh":
-                task.cancel()
+        # Cancel and *remove* any previous refresh task(s) — previously
+        # this only cancelled them, leaving cancelled-but-not-yet-awaited
+        # task objects in `self._tasks` forever (unbounded growth across
+        # repeated PKCE re-auth) and, since cancellation only takes effect
+        # at the old task's next `await`, a real window where the old and
+        # new `_refresh_loop` could both be alive and racing to write
+        # conflicting token state. Awaiting the cancellation here (instead
+        # of firing it and moving on) closes that window.
+        old_refresh_tasks = [t for t in self._tasks if getattr(t, "_qecomp_kind", None) == "refresh"]
+        for task in old_refresh_tasks:
+            task.cancel()
+        if old_refresh_tasks:
+            await asyncio.gather(*old_refresh_tasks, return_exceptions=True)
+        self._tasks = [t for t in self._tasks if t not in old_refresh_tasks]
+
         refresh_task = asyncio.create_task(self._refresh_loop(initial_expires_in=expires_in))
         refresh_task._qecomp_kind = "refresh"  # type: ignore[attr-defined]
         self._tasks.append(refresh_task)
@@ -329,7 +348,7 @@ class SpotifyIntegration(Integration):
 
     async def get_state(self) -> dict[str, Any]:
         try:
-            status = await self._redis.get(f"qecomp:integration:{self.entity_id}:status") or "DISCONNECTED"
+            status = await self._redis.get(STATUS_KEY_TMPL.format(entity_id=self.entity_id)) or "DISCONNECTED"
         except Exception:
             status = "UNKNOWN"
         return {

@@ -47,13 +47,12 @@ from backend.core.db import async_session_factory
 from backend.core.redis import redis_client
 from backend.core.security import decrypt
 from backend.models.integration import IntegrationInstance
-from backend.modules.integrations.base import Integration
+from backend.modules.integrations.base import STATUS_KEY_TMPL, Integration
 
 logger = logging.getLogger(__name__)
 
 INTEGRATIONS_DIR = Path(__file__).parent / "modules" / "integrations"
 CONFIG_CHANGE_CHANNEL = "qecomp:config_change"
-STATUS_KEY_TMPL = "qecomp:integration:{entity_id}:status"
 
 MAX_BACKOFF_SECONDS = 300  # 5 minutes, per plan §3.2 / §3.7
 
@@ -197,6 +196,11 @@ class Loader:
         config = _decrypt_config(row.domain, dict(row.config or {}))
         config["tags"] = list(row.tags or [])
         instance = cls(entity_id, config, self._redis, self._session_factory)
+        # See `Integration._status_hook`'s docstring: lets a subclass that
+        # self-detects a mid-session reconnect/degrade (e.g. OBS) report it
+        # through the loader instead of writing to Redis directly, so
+        # `get_instance_status()` stays accurate for it too.
+        instance._status_hook = self._set_status
 
         try:
             await instance.setup()
@@ -261,6 +265,7 @@ class Loader:
                 config = _decrypt_config(row.domain, dict(row.config or {}))
                 config["tags"] = list(row.tags or [])
                 instance = cls(entity_id, config, self._redis, self._session_factory)
+                instance._status_hook = self._set_status
                 try:
                     await instance.setup()
                 except Exception:

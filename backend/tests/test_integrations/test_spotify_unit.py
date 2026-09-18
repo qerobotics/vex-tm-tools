@@ -79,6 +79,48 @@ async def test_set_oauth_tokens_encrypts_refresh_token(redis_client):
     await asyncio.gather(*inst._tasks, return_exceptions=True)
 
 
+async def test_repeated_oauth_reauth_does_not_leak_refresh_tasks(redis_client):
+    """Regression test for two related bugs in `set_oauth_tokens()`:
+
+    1. The refresh task `setup()` creates when a stored refresh token
+       already exists was never tagged `_qecomp_kind == "refresh"`, so a
+       later `set_oauth_tokens()` call (PKCE re-auth from the frontend)
+       couldn't find it to cancel — leaving two `_refresh_loop` coroutines
+       racing to write conflicting token state.
+    2. `set_oauth_tokens()` cancelled old refresh tasks but never removed
+       them from `self._tasks`, so repeated re-auth grew the list
+       unboundedly with dead task objects, re-awaited on every subsequent
+       `teardown()`.
+
+    Confirms: after `setup()` (with a pre-existing refresh token) followed
+    by two `set_oauth_tokens()` calls, exactly one live task remains tagged
+    "refresh" and `self._tasks` does not accumulate cancelled entries.
+    """
+    inst = SpotifyIntegration("spotify.test", _make_config(), redis_client, None)
+    inst._http = AsyncMock()
+
+    from backend.core.security import encrypt
+
+    await redis_client.set(
+        "qecomp:integration:spotify.test:spotify_refresh_token", encrypt("seed-refresh-token")
+    )
+    inst._refresh_access_token = AsyncMock(return_value=3600)
+
+    await inst.setup()
+    try:
+        refresh_tasks = [t for t in inst._tasks if getattr(t, "_qecomp_kind", None) == "refresh"]
+        assert len(refresh_tasks) == 1, "setup()'s own refresh task must be tagged 'refresh'"
+
+        await inst.set_oauth_tokens("access-1", "refresh-1", 3600)
+        await inst.set_oauth_tokens("access-2", "refresh-2", 3600)
+
+        refresh_tasks = [t for t in inst._tasks if getattr(t, "_qecomp_kind", None) == "refresh"]
+        assert len(refresh_tasks) == 1, "old refresh tasks must be removed from self._tasks, not just cancelled"
+        assert not refresh_tasks[0].done()
+    finally:
+        await inst.teardown()
+
+
 async def test_play_sends_correct_request(integration):
     integration._http.request = AsyncMock(return_value=_mock_response(200))
     await integration.call_service("play", {"context_uri": "spotify:playlist:abc"})
