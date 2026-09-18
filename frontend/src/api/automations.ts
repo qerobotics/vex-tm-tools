@@ -5,6 +5,7 @@ import type {
   AutomationCreate,
   AutomationFolder,
   AutomationFolderCreate,
+  AutomationFolderUpdate,
   AutomationRun,
   AutomationUpdate,
   TriggerResponse,
@@ -25,6 +26,33 @@ export function useCreateAutomationFolder() {
     mutationFn: (body: AutomationFolderCreate) =>
       apiFetch<AutomationFolder>('/api/v1/automations/folders', { method: 'POST', body }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['automation-folders'] }),
+  });
+}
+
+// TODO(backend-parallel): `backend/routers/automations.py` currently only
+// implements GET/POST for `/folders` (plan finding 2.4 / audit finding
+// 2.4) — no PUT/DELETE route exists yet. Wired here against the plan's
+// expected `PUT`/`DELETE /api/v1/automations/folders/{id}` shape (mirroring
+// the automation-level update/delete routes just below), on the assumption
+// a parallel backend wave adds them; this is a one-line fix if the final
+// path/verb differs.
+export function useUpdateAutomationFolder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: AutomationFolderUpdate }) =>
+      apiFetch<AutomationFolder>(`/api/v1/automations/folders/${id}`, { method: 'PUT', body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['automation-folders'] }),
+  });
+}
+
+export function useDeleteAutomationFolder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiFetch<void>(`/api/v1/automations/folders/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['automation-folders'] });
+      qc.invalidateQueries({ queryKey: ['automations'] });
+    },
   });
 }
 

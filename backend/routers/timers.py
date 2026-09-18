@@ -26,7 +26,9 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.audit import log_action
 from backend.core.db import get_db
+from backend.core.dependencies import CurrentPrincipal
 from backend.core.dependencies import require_permission as _real_require_permission
 from backend.core.redis import get_redis
 from backend.core.security import generate_prompter_token
@@ -134,12 +136,12 @@ async def list_timers(session: AsyncSession = Depends(get_db)) -> list[TimerInst
     "",
     response_model=TimerInstanceRead,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[_require_permission("timers:edit")],
 )
 async def create_timer(
     body: TimerInstanceCreate,
     session: AsyncSession = Depends(get_db),
     redis_client: Any = Depends(get_redis),
+    principal: CurrentPrincipal = _require_permission("timers:edit"),
 ) -> TimerInstanceRead:
     existing = await session.execute(
         select(TimerInstance).where(TimerInstance.entity_id == body.entity_id)
@@ -167,6 +169,9 @@ async def create_timer(
         ) from None
     await session.refresh(row)
 
+    await log_action(
+        session, principal.subject, "create", "timer_instance", row.entity_id, changes=body.model_dump()
+    )
     await _publish_config_change(redis_client, row.entity_id, "created", row.tags)
     return _to_read_schema(row)
 
@@ -174,13 +179,13 @@ async def create_timer(
 @router.put(
     "/{entity_id}",
     response_model=TimerInstanceRead,
-    dependencies=[_require_permission("timers:edit")],
 )
 async def update_timer(
     entity_id: str,
     body: TimerInstanceUpdate,
     session: AsyncSession = Depends(get_db),
     redis_client: Any = Depends(get_redis),
+    principal: CurrentPrincipal = _require_permission("timers:edit"),
 ) -> TimerInstanceRead:
     row = await get_timer_or_404(session, entity_id)
 
@@ -192,19 +197,23 @@ async def update_timer(
     # would pass SQLAlchemy's flush only to fail at commit with an
     # unhandled IntegrityError. Treat an explicit null the same as "not
     # provided" instead.
+    changed_fields: dict[str, object] = {}
     for field_name, value in updates.items():
         if value is None:
             continue
         setattr(row, field_name, value)
+        changed_fields[field_name] = value
 
     if body.regenerate_token:
         # Appendix B.8: rotating the nonce invalidates every previously
         # issued teleprompter link for this instance.
         row.token_nonce = secrets.token_urlsafe(16)
+        changed_fields["regenerate_token"] = True
 
     await session.commit()
     await session.refresh(row)
 
+    await log_action(session, principal.subject, "update", "timer_instance", entity_id, changes=changed_fields)
     await _publish_config_change(redis_client, row.entity_id, "updated", row.tags)
     return _to_read_schema(row)
 
@@ -213,15 +222,16 @@ async def update_timer(
     "/{entity_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     response_model=None,
-    dependencies=[_require_permission("timers:edit")],
 )
 async def delete_timer(
     entity_id: str,
     session: AsyncSession = Depends(get_db),
     redis_client: Any = Depends(get_redis),
+    principal: CurrentPrincipal = _require_permission("timers:edit"),
 ) -> None:
     row = await get_timer_or_404(session, entity_id)
     tags = list(row.tags or [])
+    deleted = {"display_name": row.display_name, "tags": tags}
 
     # PrompterCue.timer_entity_id is a plain string column (no FK/cascade —
     # per plan §8's schema, cues are only ever looked up by that string, not
@@ -232,6 +242,7 @@ async def delete_timer(
     await session.delete(row)
     await session.commit()
 
+    await log_action(session, principal.subject, "delete", "timer_instance", entity_id, changes=deleted)
     await _publish_config_change(redis_client, entity_id, "deleted", tags)
 
 
@@ -313,10 +324,12 @@ async def list_cues(
     "/{entity_id}/cues",
     response_model=PrompterCueRead,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[_require_permission("prompter:edit")],
 )
 async def create_cue(
-    entity_id: str, body: PrompterCueCreate, session: AsyncSession = Depends(get_db)
+    entity_id: str,
+    body: PrompterCueCreate,
+    session: AsyncSession = Depends(get_db),
+    principal: CurrentPrincipal = _require_permission("prompter:edit"),
 ) -> PrompterCueRead:
     await get_timer_or_404(session, entity_id)
     if body.timer_entity_id != entity_id:
@@ -328,19 +341,22 @@ async def create_cue(
     session.add(row)
     await session.commit()
     await session.refresh(row)
+    await log_action(
+        session, principal.subject, "create", "prompter_cue", str(row.id), changes=body.model_dump(mode="json")
+    )
     return row
 
 
 @router.put(
     "/{entity_id}/cues/{cue_id}",
     response_model=PrompterCueRead,
-    dependencies=[_require_permission("prompter:edit")],
 )
 async def update_cue(
     entity_id: str,
     cue_id: UUID,
     body: PrompterCueUpdate,
     session: AsyncSession = Depends(get_db),
+    principal: CurrentPrincipal = _require_permission("prompter:edit"),
 ) -> PrompterCueRead:
     result = await session.execute(
         select(PrompterCue).where(
@@ -355,13 +371,16 @@ async def update_cue(
     # touch (content, type, sort_order, is_active) is NOT NULL, so an
     # explicit JSON `null` must be treated as "not provided" rather than
     # applied and left to fail at commit.
+    changed_fields: dict[str, object] = {}
     for field_name, value in body.model_dump(exclude_unset=True).items():
         if value is None:
             continue
         setattr(row, field_name, value)
+        changed_fields[field_name] = value
 
     await session.commit()
     await session.refresh(row)
+    await log_action(session, principal.subject, "update", "prompter_cue", str(cue_id), changes=changed_fields)
     return row
 
 
@@ -369,10 +388,12 @@ async def update_cue(
     "/{entity_id}/cues/{cue_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     response_model=None,
-    dependencies=[_require_permission("prompter:edit")],
 )
 async def delete_cue(
-    entity_id: str, cue_id: UUID, session: AsyncSession = Depends(get_db)
+    entity_id: str,
+    cue_id: UUID,
+    session: AsyncSession = Depends(get_db),
+    principal: CurrentPrincipal = _require_permission("prompter:edit"),
 ) -> None:
     result = await session.execute(
         select(PrompterCue).where(
@@ -382,5 +403,7 @@ async def delete_cue(
     row = result.scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cue not found")
+    deleted = {"content": row.content, "type": row.type}
     await session.delete(row)
     await session.commit()
+    await log_action(session, principal.subject, "delete", "prompter_cue", str(cue_id), changes=deleted)

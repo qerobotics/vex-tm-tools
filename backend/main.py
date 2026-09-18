@@ -44,12 +44,16 @@ from backend.modules.leader import LeaderElection
 from backend.modules.predictor.predictor import Predictor
 from backend.modules.scraper.scraper import Scraper
 from backend.modules.timer.manager import TimerManager
+from backend.routers.audit import router as audit_router
 from backend.routers.auth import router as auth_router
 from backend.routers.automations import router as automations_router
+from backend.routers.debug import router as debug_router
 from backend.routers.integrations import router as integrations_router
 from backend.routers.overlays import router as overlays_router
 from backend.routers.scripts import router as scripts_router
 from backend.routers.settings import router as settings_router
+from backend.routers.static_pages import router as static_pages_router
+from backend.routers.status import router as status_router
 from backend.routers.teams import router as teams_router
 from backend.routers.timers import get_timer_or_404
 from backend.routers.timers import router as timers_router
@@ -273,6 +277,13 @@ def create_app() -> FastAPI:
     app.include_router(overlays_router)
     app.include_router(settings_router)
     app.include_router(ws_router)
+    app.include_router(audit_router)
+    app.include_router(status_router)
+    app.include_router(debug_router)
+    # `/overlay/{entity_id}` (standalone HTML, plan Appendix B.3) and
+    # `/prompter` (bare teleprompter index, Appendix B.4) — registered here,
+    # before the SPA catch-all below, same reasoning as `/prompter/{entity_id}`.
+    app.include_router(static_pages_router)
 
     @app.get("/prompter/{entity_id}", response_class=HTMLResponse, tags=["prompter"])
     async def serve_prompter(

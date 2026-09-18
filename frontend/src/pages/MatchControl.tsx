@@ -6,9 +6,30 @@ import { usePermission } from '../hooks/usePermission';
 import { useUiStore } from '../stores/ui';
 import { PageHeader, Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
-import { Input } from '../components/ui/Input';
+import { Input, Select } from '../components/ui/Input';
 import { IntegrationStatusChip } from '../components/integrations/IntegrationStatusChip';
 import type { IntegrationInstance } from '../types/api';
+
+/** VEX TM's known audience-display modes. `backend/modules/integrations/
+ * vex_tm/services.yaml`'s `set_audience_display` service declares `display`
+ * as a required string with no enum/allowed-values list, so this is the
+ * standard VEX TM display-mode set used as a reasonable default (finding
+ * 3.5 in AUDIT_FINDINGS.md). */
+const AUDIENCE_DISPLAY_MODES = [
+  'BLANK',
+  'LOGO',
+  'SCHEDULE',
+  'RANKINGS',
+  'RANKINGS_SKILLS',
+  'MATCH_PREVIEW',
+  'IN_MATCH',
+  'MATCH_RESULTS',
+  'SEASON',
+  'SKILLS',
+  'SKILLS_RANKINGS',
+  'ALLIANCE_SELECTION',
+  'ELIMINATION_BRACKET',
+] as const;
 
 /** Plan §12/§5.16 Match Control: manual override buttons per `vex_tm.*`
  * instance, calling `POST /api/v1/integrations/{entity_id}/service/{service}`
@@ -87,7 +108,15 @@ function TmControlCard({ instance }: { instance: IntegrationInstance }) {
       </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
+        {/* GAP (AUDIT_FINDINGS.md 3.5): no backend "list skills runs" endpoint
+            exists to populate a real dropdown of available skills-run IDs
+            (checked backend/routers/teams.py and the vex_tm integration's
+            exposed data — nothing fetchable). Using a numeric input with a
+            sensible min/step instead of a fully free-text field. */}
         <Input
+          type="number"
+          min={1}
+          step={1}
           placeholder="Skills ID"
           value={skillsId}
           onChange={(e) => setSkillsId(e.target.value)}
@@ -102,12 +131,14 @@ function TmControlCard({ instance }: { instance: IntegrationInstance }) {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Input
-          placeholder="Audience display mode"
-          value={display}
-          onChange={(e) => setDisplay(e.target.value)}
-          className="w-56"
-        />
+        <Select value={display} onChange={(e) => setDisplay(e.target.value)} className="w-56">
+          <option value="">Audience display mode…</option>
+          {AUDIENCE_DISPLAY_MODES.map((mode) => (
+            <option key={mode} value={mode}>
+              {mode}
+            </option>
+          ))}
+        </Select>
         <Button
           disabled={!canControl || !display || callService.isPending}
           onClick={() => fire('set_audience_display', { display })}

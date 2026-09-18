@@ -23,6 +23,8 @@ from collections.abc import Awaitable, Callable
 import redis.asyncio as redis
 from redis.exceptions import RedisError
 
+from backend.core.ntfy import send_ntfy_notification
+
 logger = logging.getLogger(__name__)
 
 LOCK_KEY = "qecomp:leader:lock"
@@ -94,6 +96,11 @@ class LeaderElection:
         self._is_leader = False
         self._shutdown = asyncio.Event()
         self._task: asyncio.Task | None = None
+        # Holds fire-and-forget ntfy notification tasks (Appendix A.8) so
+        # they aren't garbage-collected mid-flight (asyncio only guarantees
+        # an unreferenced task keeps running until its next checkpoint, not
+        # to completion).
+        self._bg_tasks: set[asyncio.Task] = set()
 
         # Set by main.py (per §C.2 — only main.py may set these callbacks).
         self.on_promoted: Callable[[], Awaitable] = _noop
@@ -172,6 +179,7 @@ class LeaderElection:
                         # Split-brain protection: tear down before releasing (§3.1).
                         await self._safe_call(self.on_demoted)
                         self._is_leader = False
+                        self._notify_failover("lock renewal failed")
                         await self._sleep(self._renew_interval)
                         backoff = 1
                         continue
@@ -188,6 +196,7 @@ class LeaderElection:
                     # lock may have expired. Demote defensively.
                     await self._safe_call(self.on_demoted)
                     self._is_leader = False
+                    self._notify_failover("Redis unavailable")
                 await self._sleep(backoff)
                 backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
             except asyncio.CancelledError:
@@ -223,6 +232,20 @@ class LeaderElection:
         `_RELEASE_SCRIPT` for why this must be a single Lua script rather
         than a GET followed by a DELETE."""
         await self._redis.eval(_RELEASE_SCRIPT, 1, self._lock_key, self._lock_value)
+
+    def _notify_failover(self, reason: str) -> None:
+        """Appendix A.8: fire an ntfy notification on unexpected demotion
+        (renewal failure / Redis outage). Fire-and-forget — must never delay
+        or block the election loop."""
+        task = asyncio.create_task(
+            send_ntfy_notification(
+                "Leader failover",
+                f"Node {self._lock_value} lost leadership ({reason}).",
+                priority="high",
+            )
+        )
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
 
     @staticmethod
     async def _safe_call(callback: Callable[[], Awaitable]) -> None:

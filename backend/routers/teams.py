@@ -33,7 +33,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.dependencies import get_db, require_permission
+from backend.core.audit import log_action
+from backend.core.dependencies import CurrentPrincipal, get_db, require_permission
 from backend.core.exceptions import ProcessingError
 from backend.models.team import TeamProfile
 from backend.modules.media import s3
@@ -106,24 +107,28 @@ async def get_team(number: str, db: Annotated[AsyncSession, Depends(get_db)]) ->
 @router.put(
     "/{number}",
     response_model=TeamProfileRead,
-    dependencies=[Depends(require_permission("teams:edit"))],
 )
 async def update_team(
     number: str,
     body: TeamProfileUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
+    principal: Annotated[CurrentPrincipal, Depends(require_permission("teams:edit"))],
 ) -> TeamProfile:
     team = await db.get(TeamProfile, number)
     if team is None:
         raise HTTPException(status_code=404, detail=f"Team {number!r} not found")
 
+    changed_fields: dict[str, object] = {}
     if body.pit_location is not None:
         team.pit_location = body.pit_location
+        changed_fields["pit_location"] = body.pit_location
     if body.extra_notes is not None:
         team.extra_notes = body.extra_notes
+        changed_fields["extra_notes"] = body.extra_notes
 
     await db.commit()
     await db.refresh(team)
+    await log_action(db, principal.subject, "update", "team", number, changes=changed_fields)
     return team
 
 
@@ -147,12 +152,12 @@ async def get_video_status(number: str, db: Annotated[AsyncSession, Depends(get_
     "/{number}/video",
     response_model=VideoUploadAccepted,
     status_code=202,
-    dependencies=[Depends(require_permission("video:upload"))],
 )
 async def upload_team_video(
     number: str,
     background_tasks: BackgroundTasks,
     db: Annotated[AsyncSession, Depends(get_db)],
+    principal: Annotated[CurrentPrincipal, Depends(require_permission("video:upload"))],
     file: UploadFile = File(...),
     key_colour: str = Form("#00B140"),
     similarity: float = Form(0.1),
@@ -178,6 +183,15 @@ async def upload_team_video(
 
     team.video_processing_status = "PROCESSING"
     await db.commit()
+
+    await log_action(
+        db,
+        principal.subject,
+        "upload",
+        "team_video",
+        number,
+        changes={"filename": file.filename, "key_colour": key_colour, "similarity": similarity, "blend": blend},
+    )
 
     background_tasks.add_task(
         _process_and_upload_video,

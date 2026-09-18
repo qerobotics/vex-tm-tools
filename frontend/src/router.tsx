@@ -15,6 +15,8 @@ import { TeamDetailPage } from './pages/TeamDetail';
 import { AuditLogPage } from './pages/AuditLog';
 import { SettingsPage } from './pages/Settings';
 import { UsersPage } from './pages/Users';
+import { DebugIntegrationLogPage } from './pages/DebugIntegrationLog';
+import { DebugEventBusPage } from './pages/DebugEventBus';
 
 // createBrowserRouter with nested routes (plan Appendix B.2). The
 // /prompter/<entity_id> and /overlay/<entity_id> pages are explicitly out
@@ -41,6 +43,8 @@ export const router = createBrowserRouter([
       { path: 'audit', element: <AuditLogPage /> },
       { path: 'settings', element: <SettingsPage /> },
       { path: 'users', element: <UsersPage /> },
+      { path: 'debug/integration-log', element: <DebugIntegrationLogPage /> },
+      { path: 'debug/event-bus', element: <DebugEventBusPage /> },
     ],
   },
 ]);

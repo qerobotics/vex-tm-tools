@@ -171,9 +171,7 @@
     padding: 16px 24px;
     flex: 0 0 auto;
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
+    flex-direction: column;
     gap: 12px;
   }
 
@@ -189,6 +187,49 @@
     display: none;
   }
   #match-flag.visible { display: inline-block; }
+
+  /* ── Match preview team cards (plan §5.10/§7: team names, robot names,
+     rankings, previous awards — not just bare team numbers) ────────────── */
+  #match-teams {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    width: 100%;
+  }
+
+  .team-card {
+    flex: 1 1 200px;
+    min-width: 160px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    border-left: 4px solid transparent;
+  }
+  .team-card.alliance-red { border-left-color: var(--danger); }
+  .team-card.alliance-blue { border-left-color: var(--accent); }
+
+  .team-card .tc-number {
+    font-weight: 700;
+    font-size: clamp(14px, 1.8vw, 18px);
+  }
+  .team-card .tc-name {
+    color: var(--text-dim);
+    font-size: clamp(12px, 1.5vw, 15px);
+    margin-top: 2px;
+  }
+  .team-card .tc-robot,
+  .team-card .tc-rank,
+  .team-card .tc-awards {
+    font-size: clamp(11px, 1.3vw, 13px);
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+  .team-card .tc-rank strong,
+  .team-card .tc-robot strong {
+    color: var(--text);
+    font-weight: 600;
+  }
 </style>
 </head>
 <body>
@@ -208,8 +249,11 @@
   </section>
 
   <section id="match-section">
-    <div id="match-title">No match queued</div>
-    <div id="match-flag">⚡ High-potential match</div>
+    <div style="width: 100%; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+      <div id="match-title">No match queued</div>
+      <div id="match-flag">⚡ High-potential match</div>
+    </div>
+    <div id="match-teams"></div>
   </section>
 </div>
 
@@ -308,7 +352,8 @@
     nextCueLabel: document.getElementById("next-cue-label"),
     nextCue: document.getElementById("next-cue"),
     matchTitle: document.getElementById("match-title"),
-    matchFlag: document.getElementById("match-flag")
+    matchFlag: document.getElementById("match-flag"),
+    matchTeams: document.getElementById("match-teams")
   };
 
   function formatClock(totalSeconds) {
@@ -363,19 +408,96 @@
     }
   }
 
+  function escapeHtml(text) {
+    return String(text == null ? "" : text)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  // A team entry is either a bare team-number string (older/unenriched
+  // shape) or the enriched object `ws.py`'s `_dispatch_upcoming_match` is
+  // expected to send per plan §5.10/§7: `{team_number, team_name,
+  // robot_name, rank, awards}`. Every field besides `team_number` may be
+  // null/missing (not every team has complete scraped profile data yet),
+  // so every read here is defensive.
+  function normalizeTeam(team) {
+    if (typeof team === "string" || typeof team === "number") {
+      return { team_number: String(team), team_name: null, robot_name: null, rank: null, awards: [] };
+    }
+    team = team || {};
+    return {
+      team_number: team.team_number != null ? String(team.team_number) : (team.number != null ? String(team.number) : ""),
+      team_name: team.team_name || team.name || null,
+      robot_name: team.robot_name || null,
+      rank: (typeof team.rank === "number") ? team.rank : null,
+      awards: Array.isArray(team.awards) ? team.awards : []
+    };
+  }
+
+  function formatAwards(awards) {
+    if (!awards || !awards.length) return null;
+    var names = awards.map(function (a) {
+      if (typeof a === "string") return a;
+      return (a && (a.title || a.name)) || null;
+    }).filter(Boolean);
+    return names.length ? names.join(", ") : null;
+  }
+
+  function buildTeamCardHtml(team, allianceClass) {
+    var t = normalizeTeam(team);
+    var awardsText = formatAwards(t.awards);
+    var html = '<div class="team-card' + (allianceClass ? " " + allianceClass : "") + '">';
+    html += '<div class="tc-number">' + escapeHtml(t.team_number) + "</div>";
+    if (t.team_name) {
+      html += '<div class="tc-name">' + escapeHtml(t.team_name) + "</div>";
+    }
+    if (t.robot_name) {
+      html += '<div class="tc-robot"><strong>Robot:</strong> ' + escapeHtml(t.robot_name) + "</div>";
+    }
+    if (t.rank != null) {
+      html += '<div class="tc-rank"><strong>Rank:</strong> ' + escapeHtml(t.rank) + "</div>";
+    }
+    if (awardsText) {
+      html += '<div class="tc-awards">' + escapeHtml(awardsText) + "</div>";
+    }
+    html += "</div>";
+    return html;
+  }
+
   function renderMatchPreview(match) {
     if (!match) {
       el.matchTitle.textContent = "No match queued";
       el.matchFlag.classList.remove("visible");
+      el.matchTeams.innerHTML = "";
       return;
     }
-    var teamList = (match.teams || match.redTeams && match.redTeams.concat(match.blueTeams || [])) || [];
+
+    var redTeams = match.redTeams || [];
+    var blueTeams = match.blueTeams || [];
+    var hasAlliances = redTeams.length > 0 || blueTeams.length > 0;
+    var teamList = hasAlliances ? redTeams.concat(blueTeams) : (match.teams || []);
+
     var parts = [];
     if (match.matchNum) parts.push("Match " + match.matchNum);
     if (match.round) parts.push(match.round);
-    if (teamList.length) parts.push(teamList.join(", "));
     el.matchTitle.textContent = parts.length ? parts.join(" — ") : "Upcoming match";
     el.matchFlag.classList.toggle("visible", Boolean(match.high_potential));
+
+    if (!teamList.length) {
+      el.matchTeams.innerHTML = "";
+      return;
+    }
+
+    var cardsHtml = "";
+    if (hasAlliances) {
+      redTeams.forEach(function (team) { cardsHtml += buildTeamCardHtml(team, "alliance-red"); });
+      blueTeams.forEach(function (team) { cardsHtml += buildTeamCardHtml(team, "alliance-blue"); });
+    } else {
+      teamList.forEach(function (team) { cardsHtml += buildTeamCardHtml(team, ""); });
+    }
+    el.matchTeams.innerHTML = cardsHtml;
   }
 
   // ── WebSocket connection with exponential backoff reconnect ───────────
@@ -488,7 +610,9 @@
   window.__prompterTestHooks = {
     renderMarkdown: renderMarkdown,
     handleMessage: handleMessage,
-    formatClock: formatClock
+    formatClock: formatClock,
+    normalizeTeam: normalizeTeam,
+    renderMatchPreview: renderMatchPreview
   };
 })();
 </script>

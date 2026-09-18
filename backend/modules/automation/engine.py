@@ -55,6 +55,7 @@ from jinja2.sandbox import SandboxedEnvironment
 from sqlalchemy import func, select, update
 
 from backend import loader
+from backend.core.ntfy import send_ntfy_notification
 from backend.core.redis import redis_client as _default_redis_client
 from backend.core.db import async_session_factory as _default_session_factory
 from backend.models.automation import Automation, AutomationRun, Script
@@ -732,6 +733,14 @@ class AutomationEngine:
             try:
                 await self._log_run(automation.id, event.model_dump(), status, failed_index, error)
                 await self._touch_last_triggered(automation.id)
+                if status == "failed":
+                    # Appendix A.8: notify once the retry (Appendix A.7) is
+                    # exhausted and the failure is on the record.
+                    await send_ntfy_notification(
+                        "Automation action failed",
+                        f"Automation '{automation.alias}' failed: {error}",
+                        priority="high",
+                    )
             except Exception:
                 logger.exception("Failed to record execution history for automation '%s'", automation.alias)
 

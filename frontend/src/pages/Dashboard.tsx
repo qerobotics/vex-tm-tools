@@ -1,6 +1,7 @@
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useIntegrations } from '../api/integrations';
 import { useReadyz } from '../api/health';
+import { useClusterStatus } from '../api/status';
 import { PageHeader, Card } from '../components/ui/Card';
 import { TelemetryCard } from '../components/integrations/TelemetryCard';
 import { LiveEventFeed } from '../components/ws/LiveEventFeed';
@@ -11,16 +12,18 @@ import { StatusBadge } from '../components/ui/Badge';
  * TanStack Query (`useIntegrations`) and live status from the WS store
  * (via `TelemetryCard`/`IntegrationStatusChip`) — never merged, per §C.8.4.
  *
- * GAP: plan §11 lists `GET /api/v1/status` for cluster/leader status; no
- * such route exists in the merged backend (grep of backend/routers/ and
- * backend/main.py confirms it). This card is built from `/readyz` (db/redis
- * reachability) instead, with an explicit note rather than fabricated
- * leader/heartbeat data.
+ * Cluster Status now reads the real `GET /api/v1/status` endpoint (plan
+ * §11, audit finding 1.7) for leader node info and per-integration health,
+ * with `/readyz`'s db/redis reachability kept alongside it (a distinct
+ * concern — process-level readiness, not cluster leadership). The
+ * dedicated Redis-unavailable warning banner (Appendix A.10 / audit finding
+ * 3.7) is mounted globally in `PageLayout`, not here.
  */
 export function DashboardPage() {
   useWebSocket('/ws/events');
   const { data: integrations, isLoading } = useIntegrations();
   const { data: ready } = useReadyz();
+  const { data: status, isLoading: statusLoading, isError: statusError } = useClusterStatus();
 
   return (
     <div>
@@ -40,11 +43,39 @@ export function DashboardPage() {
           ) : (
             <p className="text-sm text-vmd-textSubtle">Loading readiness…</p>
           )}
-          <p className="mt-2 text-xs text-vmd-textSubtle">
-            Note: the plan's §11 <code>GET /api/v1/status</code> (leader node, both node
-            heartbeats) is not implemented in the current backend — this card shows{' '}
-            <code>/readyz</code>'s DB/Redis reachability instead.
-          </p>
+
+          <div className="mt-3 border-t border-vmd-border pt-3 text-sm">
+            {statusLoading && <p className="text-vmd-textSubtle">Loading cluster status…</p>}
+            {statusError && (
+              <p className="text-vmd-textSubtle">Cluster status is currently unavailable.</p>
+            )}
+            {status && (
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-4">
+                  <span>
+                    Leader:{' '}
+                    {status.leader?.is_leader === undefined ? (
+                      'unknown'
+                    ) : status.leader.is_leader ? (
+                      'this node'
+                    ) : (
+                      `${status.leader.leader_address ?? 'unknown address'}`
+                    )}
+                  </span>
+                </div>
+                {status.integrations && status.integrations.length > 0 && (
+                  <div className="flex flex-wrap gap-3">
+                    {status.integrations.map((entry) => (
+                      <span key={entry.entity_id ?? Math.random()} className="flex items-center gap-1.5">
+                        <StatusBadge status={entry.status ?? 'DISCONNECTED'} />
+                        <span className="text-xs text-vmd-textSubtle">{entry.entity_id ?? '—'}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </Card>
       </section>
 

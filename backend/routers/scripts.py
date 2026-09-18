@@ -17,7 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.dependencies import get_db, require_permission
+from backend.core.audit import log_action
+from backend.core.dependencies import CurrentPrincipal, get_db, require_permission
 from backend.models.automation import Script
 from backend.schemas.automation import ScriptCreate, ScriptRead, ScriptUpdate
 
@@ -42,9 +43,12 @@ async def list_scripts(session: AsyncSession = Depends(get_db)) -> list[ScriptRe
     "",
     response_model=ScriptRead,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_permission("automations:edit"))],
 )
-async def create_script(body: ScriptCreate, session: AsyncSession = Depends(get_db)) -> ScriptRead:
+async def create_script(
+    body: ScriptCreate,
+    session: AsyncSession = Depends(get_db),
+    principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
+) -> ScriptRead:
     row = Script(**body.model_dump())
     session.add(row)
     try:
@@ -55,20 +59,27 @@ async def create_script(body: ScriptCreate, session: AsyncSession = Depends(get_
             status_code=status.HTTP_409_CONFLICT, detail=f"Script {body.name!r} already exists"
         ) from None
     await session.refresh(row)
+    await log_action(session, principal.subject, "create", "script", str(row.id), changes=body.model_dump())
     return row
 
 
 @router.put(
     "/{script_id}",
     response_model=ScriptRead,
-    dependencies=[Depends(require_permission("automations:edit"))],
 )
-async def update_script(script_id: UUID, body: ScriptUpdate, session: AsyncSession = Depends(get_db)) -> ScriptRead:
+async def update_script(
+    script_id: UUID,
+    body: ScriptUpdate,
+    session: AsyncSession = Depends(get_db),
+    principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
+) -> ScriptRead:
     row = await _get_script_or_404(session, script_id)
+    changed_fields: dict[str, object] = {}
     for field_name, value in body.model_dump(exclude_unset=True).items():
         if value is None and field_name in {"name", "action_yaml"}:
             continue
         setattr(row, field_name, value)
+        changed_fields[field_name] = value
     try:
         await session.commit()
     except IntegrityError:
@@ -77,6 +88,7 @@ async def update_script(script_id: UUID, body: ScriptUpdate, session: AsyncSessi
             status_code=status.HTTP_409_CONFLICT, detail=f"Script name {row.name!r} already in use"
         ) from None
     await session.refresh(row)
+    await log_action(session, principal.subject, "update", "script", str(script_id), changes=changed_fields)
     return row
 
 
@@ -84,9 +96,14 @@ async def update_script(script_id: UUID, body: ScriptUpdate, session: AsyncSessi
     "/{script_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     response_model=None,
-    dependencies=[Depends(require_permission("automations:edit"))],
 )
-async def delete_script(script_id: UUID, session: AsyncSession = Depends(get_db)) -> None:
+async def delete_script(
+    script_id: UUID,
+    session: AsyncSession = Depends(get_db),
+    principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
+) -> None:
     row = await _get_script_or_404(session, script_id)
+    deleted = {"name": row.name}
     await session.delete(row)
     await session.commit()
+    await log_action(session, principal.subject, "delete", "script", str(script_id), changes=deleted)

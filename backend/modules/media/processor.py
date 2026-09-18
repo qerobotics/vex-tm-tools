@@ -16,6 +16,7 @@ import shutil
 from pathlib import Path
 
 from backend.core.exceptions import ProcessingError
+from backend.core.ntfy import send_ntfy_notification
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,26 @@ async def _drain_stderr(stream: asyncio.StreamReader, tail: list[str], max_tail:
 
 
 async def process_video(
+    input_path: str,
+    output_path: str,
+    key_colour: str,
+    similarity: float,
+    blend: float,
+) -> None:
+    """Run the FFmpeg green-screen keying pipeline, then re-raise on failure
+    after firing an Appendix A.8 ntfy notification (see `_process_video` for
+    the actual pipeline; kept separate so this notify-and-reraise wrapper
+    stays a single, minimal choke point instead of touching each of
+    `_process_video`'s several `ProcessingError` raise sites individually).
+    """
+    try:
+        await _process_video(input_path, output_path, key_colour, similarity, blend)
+    except ProcessingError as exc:
+        await send_ntfy_notification("Video processing failed", str(exc), priority="high")
+        raise
+
+
+async def _process_video(
     input_path: str,
     output_path: str,
     key_colour: str,

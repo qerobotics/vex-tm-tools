@@ -25,7 +25,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.dependencies import get_db, require_permission
+from backend.core.audit import log_action
+from backend.core.dependencies import CurrentPrincipal, get_db, require_permission
 from backend.models.automation import Automation, AutomationFolder, AutomationRun
 from backend.modules.automation.engine import AutomationEngine, validate_automation_yaml
 from backend.schemas.automation import (
@@ -89,15 +90,19 @@ async def list_folders(session: AsyncSession = Depends(get_db)) -> list[Automati
     "/folders",
     response_model=AutomationFolderRead,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_permission("automations:edit"))],
 )
 async def create_folder(
-    body: AutomationFolderCreate, session: AsyncSession = Depends(get_db)
+    body: AutomationFolderCreate,
+    session: AsyncSession = Depends(get_db),
+    principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
 ) -> AutomationFolderRead:
     row = AutomationFolder(**body.model_dump())
     session.add(row)
     await session.commit()
     await session.refresh(row)
+    await log_action(
+        session, principal.subject, "create", "automation_folder", str(row.id), changes=body.model_dump()
+    )
     return row
 
 
@@ -118,10 +123,11 @@ async def list_automations(session: AsyncSession = Depends(get_db)) -> list[Auto
     "",
     response_model=AutomationRead,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_permission("automations:edit"))],
 )
 async def create_automation(
-    body: AutomationCreate, session: AsyncSession = Depends(get_db)
+    body: AutomationCreate,
+    session: AsyncSession = Depends(get_db),
+    principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
 ) -> AutomationRead:
     row = Automation(**body.model_dump())
     session.add(row)
@@ -134,18 +140,21 @@ async def create_automation(
             detail="Could not create automation (check folder_id references an existing folder)",
         ) from None
     await session.refresh(row)
+    await log_action(
+        session, principal.subject, "create", "automation", str(row.id), changes=body.model_dump(mode="json")
+    )
     return row
 
 
 @router.put(
     "/{automation_id}",
     response_model=AutomationRead,
-    dependencies=[Depends(require_permission("automations:edit"))],
 )
 async def update_automation(
     automation_id: UUID,
     body: AutomationUpdate,
     session: AsyncSession = Depends(get_db),
+    principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
 ) -> AutomationRead:
     row = await _get_automation_or_404(session, automation_id)
 
@@ -154,13 +163,18 @@ async def update_automation(
     # one of those NOT-NULL fields would otherwise pass exclude_unset and
     # fail unhandled at commit, so treat it the same as "not provided"
     # (matches the same rationale in routers/timers.py's update_timer).
+    changed_fields: dict[str, object] = {}
     for field_name, value in body.model_dump(exclude_unset=True).items():
         if value is None and field_name in {"alias", "enabled", "trigger_yaml", "action_yaml"}:
             continue
         setattr(row, field_name, value)
+        changed_fields[field_name] = value
 
     await session.commit()
     await session.refresh(row)
+    await log_action(
+        session, principal.subject, "update", "automation", str(automation_id), changes=changed_fields
+    )
     return row
 
 
@@ -168,12 +182,17 @@ async def update_automation(
     "/{automation_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     response_model=None,
-    dependencies=[Depends(require_permission("automations:edit"))],
 )
-async def delete_automation(automation_id: UUID, session: AsyncSession = Depends(get_db)) -> None:
+async def delete_automation(
+    automation_id: UUID,
+    session: AsyncSession = Depends(get_db),
+    principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
+) -> None:
     row = await _get_automation_or_404(session, automation_id)
+    deleted = {"alias": row.alias, "folder_id": str(row.folder_id) if row.folder_id else None}
     await session.delete(row)
     await session.commit()
+    await log_action(session, principal.subject, "delete", "automation", str(automation_id), changes=deleted)
 
 
 # ── Test Run / execution history / validation ────────────────────────────
@@ -182,20 +201,23 @@ async def delete_automation(automation_id: UUID, session: AsyncSession = Depends
 @router.post(
     "/{automation_id}/trigger",
     response_model=TriggerResponse,
-    dependencies=[Depends(require_permission("automations:trigger"))],
 )
 async def trigger_automation(
     automation_id: UUID,
     session: AsyncSession = Depends(get_db),
     engine: AutomationEngine = Depends(_require_engine),
+    principal: CurrentPrincipal = Depends(require_permission("automations:trigger")),
 ) -> TriggerResponse:
     """The "Test Run" button (plan §12): fires the automation's action
     chain immediately, regardless of its trigger/condition."""
-    await _get_automation_or_404(session, automation_id)  # 404 before touching the engine
+    row = await _get_automation_or_404(session, automation_id)  # 404 before touching the engine
     try:
         result = await engine.trigger(automation_id, {})
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    await log_action(
+        session, principal.subject, "trigger", "automation", str(automation_id), changes={"alias": row.alias}
+    )
     return TriggerResponse(**result)
 
 

@@ -5,6 +5,7 @@ import type {
   IntegrationInstanceCreate,
   IntegrationInstanceUpdate,
   IntegrationSchemasResponse,
+  IntegrationTestResult,
   ZerosPreset,
   ZerosPresetCreate,
 } from '../types/api';
@@ -53,6 +54,22 @@ export function useDeleteIntegration() {
     mutationFn: (entityId: string) =>
       apiFetch<void>(`/api/v1/integrations/${encodeURIComponent(entityId)}`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+// TODO(backend-parallel): the plan (finding 1.11) calls for
+// `POST /api/v1/integrations/{entity_id}/test`; as of this wave it is not
+// yet registered in `backend/routers/integrations.py`, but a parallel wave
+// is expected to land it at exactly this path/method — this is a one-line
+// fix (or none at all) once it does. Kept defensive: any error surfaces via
+// the mutation's onError, same as every other integration mutation here.
+export function useTestIntegrationConnection() {
+  return useMutation({
+    mutationFn: (entityId: string) =>
+      apiFetch<IntegrationTestResult>(
+        `/api/v1/integrations/${encodeURIComponent(entityId)}/test`,
+        { method: 'POST' },
+      ),
   });
 }
 

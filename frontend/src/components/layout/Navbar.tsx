@@ -12,11 +12,14 @@ import {
   Settings as SettingsIcon,
   ShieldCheck,
   LogOut,
+  Bug,
+  Activity,
 } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { logout } from '../../api/auth';
 import { useAuthStore } from '../../stores/auth';
+import { usePermission } from '../../hooks/usePermission';
 
 interface NavItem {
   to: string;
@@ -39,9 +42,17 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/users', label: 'Users & Roles', icon: ShieldCheck },
 ];
 
+/** Appendix A.11 debug views — gated on `settings:edit`, same as the pages
+ * themselves (AUDIT_FINDINGS.md 1.10). */
+const DEBUG_NAV_ITEMS: NavItem[] = [
+  { to: '/debug/integration-log', label: 'Integration Debug Log', icon: Bug },
+  { to: '/debug/event-bus', label: 'Live Event Bus', icon: Activity },
+];
+
 export function Navbar() {
   const subject = useAuthStore((s) => s.subject);
   const clearAuth = useAuthStore((s) => s.clear);
+  const canViewDebug = usePermission('settings:edit');
   const logoutMutation = useMutation({
     mutationFn: logout,
     onSuccess: () => {
@@ -65,6 +76,17 @@ export function Navbar() {
             <span className="nav-label">{label}</span>
           </NavLink>
         ))}
+        {canViewDebug &&
+          DEBUG_NAV_ITEMS.map(({ to, label, icon: Icon }) => (
+            <NavLink
+              key={to}
+              to={to}
+              className={({ isActive }) => `navbar-anim-link rounded-lg px-1.5 py-1.5 ${isActive ? 'active' : ''}`}
+            >
+              <Icon size={18} className="text-vmd-textMuted" />
+              <span className="nav-label">{label}</span>
+            </NavLink>
+          ))}
       </div>
       <div className="ml-auto flex items-center gap-2 pl-2 text-xs text-vmd-textSubtle">
         {subject && <span>{subject}</span>}

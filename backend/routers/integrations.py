@@ -12,16 +12,23 @@ import logging
 import time
 from typing import Annotated, Any
 
+import httpx
 import yaml
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend import loader
-from backend.core.dependencies import get_db, require_permission
+from backend.core.audit import log_action
+from backend.core.dependencies import CurrentPrincipal, get_current_principal, get_db, require_permission
 from backend.core.redis import get_redis
 from backend.core.security import decrypt, encrypt
+from backend.core.service_validation import (
+    ServiceValidationError,
+    redact_service_data,
+    validate_service_data,
+)
 from backend.loader import INTEGRATIONS_DIR
 from backend.models.integration import IntegrationInstance
 from backend.schemas.events import EventBusMessage
@@ -146,12 +153,12 @@ async def list_integrations(db: Annotated[AsyncSession, Depends(get_db)]) -> lis
     "",
     response_model=IntegrationInstanceRead,
     status_code=201,
-    dependencies=[Depends(require_permission("integrations:edit"))],
 )
 async def create_integration(
     body: IntegrationInstanceCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
     redis_client: Any = Depends(get_redis),
+    principal: CurrentPrincipal = Depends(require_permission("integrations:edit")),
 ) -> IntegrationInstanceRead:
     manifests = _load_manifests()
     if body.domain not in manifests:
@@ -180,19 +187,27 @@ async def create_integration(
     await db.refresh(row)
 
     await _publish_config_change(redis_client, row.entity_id, "created", row.tags)
+    await log_action(
+        db,
+        principal.subject,
+        "create",
+        "integration",
+        row.entity_id,
+        changes={"config": _redact_secrets(row.domain, dict(row.config or {}), manifests), "domain": row.domain},
+    )
     return _to_read(row, manifests)
 
 
 @router.put(
     "/{entity_id}",
     response_model=IntegrationInstanceRead,
-    dependencies=[Depends(require_permission("integrations:edit"))],
 )
 async def update_integration(
     entity_id: str,
     body: IntegrationInstanceUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
     redis_client: Any = Depends(get_redis),
+    principal: CurrentPrincipal = Depends(require_permission("integrations:edit")),
 ) -> IntegrationInstanceRead:
     row = await _get_or_404(db, entity_id)
     manifests = _load_manifests()
@@ -215,6 +230,14 @@ async def update_integration(
     await db.refresh(row)
 
     await _publish_config_change(redis_client, row.entity_id, "updated", row.tags)
+    await log_action(
+        db,
+        principal.subject,
+        "update",
+        "integration",
+        row.entity_id,
+        changes={"config": _redact_secrets(row.domain, dict(row.config or {}), manifests)},
+    )
     return _to_read(row, manifests)
 
 
@@ -222,56 +245,153 @@ async def update_integration(
     "/{entity_id}",
     status_code=204,
     response_model=None,
-    dependencies=[Depends(require_permission("integrations:edit"))],
 )
 async def delete_integration(
     entity_id: str,
     db: Annotated[AsyncSession, Depends(get_db)],
     redis_client: Any = Depends(get_redis),
+    principal: CurrentPrincipal = Depends(require_permission("integrations:edit")),
 ) -> None:
     row = await _get_or_404(db, entity_id)
     tags = list(row.tags or [])
+    domain = row.domain
     await db.delete(row)
     await db.commit()
     await _publish_config_change(redis_client, entity_id, "deleted", tags)
+    await log_action(
+        db,
+        principal.subject,
+        "delete",
+        "integration",
+        entity_id,
+        changes={"domain": domain, "tags": tags},
+    )
 
 
 # ── service calls / state / oauth (plan §11) ─────────────────────────────
 
+_DOMAIN_PERMISSIONS = {
+    "zeros": "vfx:control",
+    "atem": "video:control",
+    "obs": "video:control",
+    "spotify": "audio:control",
+    "vex_tm": "tm:control",
+}
 
-@router.post("/{entity_id}/service/{service}")
+
+async def _proxy_to_leader(
+    request: Request, leader: Any, entity_id: str, service: str
+) -> Response | None:
+    """Passive-node request forwarding (plan §3.1).
+
+    Integration instances (the `Loader`) only run on the current leader
+    pod. When a passive pod receives a `service` call it can't service
+    locally, it reads the current leader's address from Redis
+    (`LeaderElection.get_leader_address_async()`) and HTTP-proxies this
+    exact request to `http://{leader_address}/api/v1/integrations/...`,
+    forwarding the caller's `Authorization`/`Cookie` headers (so the
+    leader's own permission check sees the same principal) and the raw
+    request body, then returns the leader's response verbatim. Returns
+    `None` if no leader address can currently be resolved (Redis down, no
+    leader yet) so the caller falls back to a plain 503.
+    """
+    leader_address = await leader.get_leader_address_async()
+    if not leader_address:
+        return None
+
+    forward_headers: dict[str, str] = {"content-type": "application/json"}
+    auth = request.headers.get("authorization")
+    if auth:
+        forward_headers["authorization"] = auth
+    cookie = request.headers.get("cookie")
+    if cookie:
+        forward_headers["cookie"] = cookie
+
+    url = f"http://{leader_address}/api/v1/integrations/{entity_id}/service/{service}"
+    body = await request.body()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, content=body, headers=forward_headers)
+    except httpx.HTTPError:
+        logger.exception("Failed to proxy service call for %r to leader at %s", entity_id, leader_address)
+        return None
+
+    return Response(
+        content=resp.content,
+        status_code=resp.status_code,
+        headers={"content-type": resp.headers.get("content-type", "application/json")},
+    )
+
+
+@router.post("/{entity_id}/service/{service}", response_model=None)
 async def call_integration_service(
+    request: Request,
     entity_id: str,
     service: str,
     db: Annotated[AsyncSession, Depends(get_db)],
     data: dict[str, Any] | None = Body(default=None),
-    principal=Depends(require_permission("integrations:read")),
-) -> dict[str, Any]:
+    principal: CurrentPrincipal | None = Depends(get_current_principal),
+) -> Response | dict[str, Any]:
     """Per plan §11, permission for this route "varies by integration"
     (`vfx:control` for zeros.*, `video:control` for atem.*/obs.*,
     `audio:control` for spotify.*, `tm:control` for vex_tm.*). Enforcing a
     single static permission via `Depends()` can't express that
     per-instance-domain branching, so this handler checks the caller's
     resolved permission set directly against the domain -> permission
-    mapping below after resolving the instance's domain."""
+    mapping below after resolving the instance's domain.
+
+    Deliberately carries NO blanket `Depends(require_permission(...))`: a
+    static extra permission layered on top of the domain-specific check
+    below (this route previously also required `integrations:read`) can't
+    be satisfied by a role that only holds the relevant domain-control
+    permission — e.g. `qecomp-video` has `video:control` but not
+    `integrations:read`, which locked it out of atem/obs entirely. The
+    domain-specific check is now the sole gate; authentication is still
+    required (401 with no principal at all).
+    """
+    if principal is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
     row = await _get_or_404(db, entity_id)
-    domain_permission = {
-        "zeros": "vfx:control",
-        "atem": "video:control",
-        "obs": "video:control",
-        "spotify": "audio:control",
-        "vex_tm": "tm:control",
-    }.get(row.domain)
+    domain_permission = _DOMAIN_PERMISSIONS.get(row.domain)
     if domain_permission and not principal.has_permission(domain_permission):
         raise HTTPException(status_code=403, detail=f"Missing required permission: {domain_permission!r}")
 
+    data = data or {}
+    try:
+        validate_service_data(row.domain, service, data)
+    except ServiceValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     instance = loader.get_instance(entity_id)
     if instance is None:
+        leader = getattr(request.app.state, "leader", None)
+        if leader is not None and not leader.is_leader():
+            proxied = await _proxy_to_leader(request, leader, entity_id, service)
+            if proxied is not None:
+                return proxied
         raise HTTPException(status_code=503, detail=f"Integration {entity_id!r} is not currently running")
+
     try:
-        return await instance.call_service(service, data or {})
+        result = await instance.call_service(service, data)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except KeyError as exc:
+        # Defense-in-depth: `validate_service_data` should already catch a
+        # missing required field, but this also covers schema drift (an
+        # integration reading a field name `services.yaml` doesn't declare)
+        # so it surfaces as a clean 400 instead of an unhandled 500.
+        raise HTTPException(status_code=400, detail=f"Missing or invalid field: {exc}") from exc
+
+    await log_action(
+        db,
+        principal.subject,
+        "service_call",
+        "integration",
+        entity_id,
+        changes={"service": service, "data": redact_service_data(row.domain, service, data)},
+    )
+    return result
 
 
 @router.post(

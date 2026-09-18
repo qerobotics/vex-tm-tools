@@ -82,6 +82,8 @@ export interface AutomationFolderCreate {
   parent_id?: string | null;
 }
 
+export type AutomationFolderUpdate = Partial<AutomationFolderCreate>;
+
 export interface Automation {
   id: string;
   folder_id: string | null;
@@ -134,6 +136,59 @@ export interface TriggerResponse {
   failed_action_index: number | null;
   error: string | null;
   actions_executed: number;
+}
+
+// ── Integration test-connection (backend `POST /{entity_id}/test`) ──────
+// TODO: confirm exact response shape once the parallel backend wave lands
+// the route (plan finding 1.11 / Integrations page "Test Connection").
+export interface IntegrationTestResult {
+  ok: boolean;
+  message?: string;
+  detail?: string;
+}
+
+// ── Audit log (backend/schemas/audit.py `AuditLogRead`) ──────────────────
+
+export interface AuditLogEntry {
+  id: string;
+  user_id: string | null;
+  action: string;
+  resource_type: string | null;
+  resource_id: string | null;
+  changes: Record<string, unknown> | null;
+  ip_address: string | null;
+  created_at: string;
+}
+
+export interface AuditLogFilters {
+  user?: string;
+  action?: string;
+  resource_type?: string;
+  start_date?: string;
+  end_date?: string;
+  limit?: number;
+  offset?: number;
+}
+
+// ── Cluster / integration status (plan §11 `GET /api/v1/status`) ─────────
+// Shape is provisional pending the parallel backend wave (plan finding 1.7)
+// — kept optional/defensive so the UI degrades gracefully if a field is
+// renamed or omitted.
+
+export interface ClusterLeaderInfo {
+  is_leader?: boolean;
+  leader_address?: string | null;
+}
+
+export interface IntegrationHealthEntry {
+  entity_id?: string;
+  status?: string;
+  last_event_at?: number | null;
+}
+
+export interface ClusterStatus {
+  leader?: ClusterLeaderInfo;
+  integrations?: IntegrationHealthEntry[];
 }
 
 export interface Script {

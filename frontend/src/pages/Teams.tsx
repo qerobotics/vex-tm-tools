@@ -10,15 +10,24 @@ export function TeamsPage() {
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search, 200);
 
-  const filtered = (teams ?? []).filter((t) =>
-    t.team_number.toLowerCase().includes(debouncedSearch.toLowerCase()),
+  // Plan §12 "Search/filter by team number, name, division" (AUDIT_FINDINGS.md
+  // 3.6). `TeamProfile` (frontend/src/types/api.ts, backend/schemas/team.py)
+  // has no `division`/`division_id` field at all — the teams list endpoint
+  // doesn't return one — so division filtering isn't implementable without a
+  // backend change; this is a backend gap, not something to fake here.
+  // `robot_name` is present, so it's included alongside `team_number`.
+  const needle = debouncedSearch.toLowerCase();
+  const filtered = (teams ?? []).filter(
+    (t) =>
+      t.team_number.toLowerCase().includes(needle) ||
+      (t.robot_name ?? '').toLowerCase().includes(needle),
   );
 
   return (
     <div>
       <PageHeader title="Teams" subtitle="Team profiles auto-populated from the TM scraper." />
       <Input
-        placeholder="Search by team number…"
+        placeholder="Search by team number or robot name…"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         className="mb-4 max-w-xs"

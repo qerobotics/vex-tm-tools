@@ -28,8 +28,10 @@ from sqlalchemy import select
 
 from backend import loader
 from backend.core.db import async_session_factory
+from backend.core.dependencies import ALL_PERMISSIONS
 from backend.core.redis import redis_client
 from backend.core.security import validate_prompter_token
+from backend.core.sessions import SESSION_COOKIE_NAME, get_session, unsign_session_id
 from backend.models.overlay import OverlayInstance
 from backend.models.timer import PrompterCue, TimerInstance
 
@@ -163,9 +165,14 @@ class ConnectionManager:
                 await pubsub.aclose()
 
     async def _dispatch(self, data: dict[str, Any]) -> None:
-        # /ws/events: every event, verbatim (Dashboard / Field Monitor /
-        # Match Control / Audit Log live feed).
-        await self.broadcast_all(data)
+        # /ws/events: every event, broadcast-all to any browser-facing
+        # client. Per plan §5.12, `match_prediction` events' raw
+        # `predicted_red`/`predicted_blue` payload fields must NEVER reach a
+        # browser-facing channel (only the sanitized `high_potential` bool
+        # may) — this is the single place `/ws/events` fans events out, so
+        # sanitizing here (rather than at the publisher) is the one spot
+        # that can't be bypassed by a future publisher forgetting to redact.
+        await self.broadcast_all(self._sanitize_for_events(data))
 
         event_type = data.get("type")
         entity_id = data.get("entity_id")
@@ -174,6 +181,23 @@ class ConnectionManager:
             await self._dispatch_timer_state(entity_id, event_type, data)
         elif event_type == "fieldMatchAssigned":
             await self._dispatch_upcoming_match(data)
+
+    @staticmethod
+    def _sanitize_for_events(data: dict[str, Any]) -> dict[str, Any]:
+        """Strips `predicted_red`/`predicted_blue` from a `match_prediction`
+        event's payload before it goes out over `/ws/events` (plan §5.12).
+        `high_potential`/`matchNum`/`divisionId` (and anything else in the
+        payload) pass through untouched; every other event type is returned
+        as-is. Returns a shallow copy — never mutates the caller's `data`,
+        which other `_dispatch` branches (e.g. `_dispatch_upcoming_match`)
+        still need in its original form."""
+        if data.get("type") != "match_prediction":
+            return data
+        payload = data.get("payload")
+        if not isinstance(payload, dict):
+            return data
+        sanitized_payload = {k: v for k, v in payload.items() if k not in ("predicted_red", "predicted_blue")}
+        return {**data, "payload": sanitized_payload}
 
     async def _dispatch_timer_state(self, entity_id: str, event_type: str, data: dict[str, Any]) -> None:
         """Translates a raw `timer_*` event (whose payload varies by type,
@@ -338,6 +362,40 @@ async def _cues_snapshot(entity_id: str) -> dict[str, Any]:
     }
 
 
+async def _ws_has_prompter_control(websocket: WebSocket) -> bool:
+    """Resolves `prompter:control` for a `/ws/prompter` connection from its
+    session cookie, mirroring `dependencies.get_current_principal`'s
+    cookie-branch (there's no API-key branch here — a bare EMCEE iPad
+    reaching this WS only ever carries a browser session cookie, never a
+    `Bearer` header). The teleprompter *token* in the query string (per
+    plan §5.10) only proves "this client was handed a link to this specific
+    timer" — it's obscurity-based and never expires until manually rotated,
+    so per §13 it must not, by itself, authorize `start_countdown`; a real
+    `prompter:control` session is required on top of it.
+
+    Deliberate tradeoff: if the connection carries no valid session at all
+    (e.g. the iPad was opened straight from the token link, no login), this
+    returns `False` and `start_countdown` is rejected with an explicit WS
+    error rather than silently ignored — there is no established
+    "viewer with valid token but no session" bypass anywhere else in this
+    codebase (every other privileged action goes through
+    `require_permission`), so none is invented here either.
+    """
+    cookie_value = websocket.cookies.get(SESSION_COOKIE_NAME)
+    if not cookie_value:
+        return False
+    session_id = unsign_session_id(cookie_value)
+    if session_id is None:
+        return False
+    data = await get_session(redis_client, session_id)
+    if data is None:
+        return False
+    if data.get("is_admin_local"):
+        return True
+    permissions = set(data.get("permissions") or [])
+    return ALL_PERMISSIONS in permissions or "prompter:control" in permissions
+
+
 @router.websocket("/ws/prompter/{entity_id}")
 async def ws_prompter(websocket: WebSocket, entity_id: str) -> None:
     token = websocket.query_params.get("token", "")
@@ -391,6 +449,31 @@ async def ws_prompter(websocket: WebSocket, entity_id: str) -> None:
             if not isinstance(msg, dict):
                 continue
             if msg.get("type") == "start_countdown":
+                # Per plan §5.10/§13: only a caller holding `prompter:control`
+                # (EMCEE) may trigger the countdown — possession of the
+                # HMAC teleprompter token alone (already validated above,
+                # at connect time) is not sufficient, since that token never
+                # expires until manually rotated. See
+                # `_ws_has_prompter_control`'s docstring for the "no session
+                # at all" tradeoff.
+                if not await _ws_has_prompter_control(websocket):
+                    logger.warning(
+                        "Denied start_countdown on %s: caller lacks prompter:control (or no valid session)",
+                        entity_id,
+                    )
+                    await websocket.send_json(
+                        {
+                            "entity_id": entity_id,
+                            "entity_tags": list(row.tags or []),
+                            "type": "error",
+                            "timestamp": time.time(),
+                            "payload": {
+                                "error": "forbidden",
+                                "detail": "Missing required permission: 'prompter:control'",
+                            },
+                        }
+                    )
+                    continue
                 current_manager = manager.get_timer_manager() if manager.get_timer_manager else None
                 if current_manager is None:
                     await websocket.send_json(

@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import importlib.util
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,7 @@ import yaml
 from sqlalchemy import select
 
 from backend.core.db import async_session_factory
+from backend.core.ntfy import send_ntfy_notification
 from backend.core.redis import redis_client
 from backend.core.security import decrypt
 from backend.models.integration import IntegrationInstance
@@ -53,6 +55,16 @@ logger = logging.getLogger(__name__)
 
 INTEGRATIONS_DIR = Path(__file__).parent / "modules" / "integrations"
 CONFIG_CHANGE_CHANNEL = "qecomp:config_change"
+EVENTS_CHANNEL = "qecomp:events"
+
+# Appendix A.11's Integration Debug Log: last-100-raw-events ring buffer per
+# integration instance, keyed the same way as `STATUS_KEY_TMPL` (see
+# `_events_debug_log_listener` below). A generous 7-day TTL is used instead
+# of no TTL at all so a long-deleted/renamed entity's debug log doesn't
+# linger in Redis forever with nothing left to clean it up.
+DEBUG_LOG_KEY_TMPL = "qecomp:integration:{entity_id}:debug_log"
+DEBUG_LOG_MAX_ENTRIES = 100
+DEBUG_LOG_TTL_SECONDS = 7 * 24 * 3600
 
 MAX_BACKOFF_SECONDS = 300  # 5 minutes, per plan §3.2 / §3.7
 
@@ -146,7 +158,11 @@ class Loader:
         self._retry_tasks: dict[str, asyncio.Task] = {}
 
         self._pubsub_task: asyncio.Task | None = None
+        self._events_debug_task: asyncio.Task | None = None
         self._shutdown = asyncio.Event()
+        # Holds fire-and-forget ntfy notification tasks (Appendix A.8) so
+        # they aren't garbage-collected mid-flight.
+        self._bg_tasks: set[asyncio.Task] = set()
 
         global _loader
         _loader = self
@@ -169,6 +185,7 @@ class Loader:
                 await self._spin_up(row)
 
         self._pubsub_task = asyncio.create_task(self._config_change_listener())
+        self._events_debug_task = asyncio.create_task(self._events_debug_log_listener())
 
     async def _fetch_rows(self) -> list[IntegrationInstance]:
         async with self._session_factory() as session:
@@ -237,11 +254,25 @@ class Loader:
         await self._set_status(entity_id, "DISCONNECTED")
 
     async def _set_status(self, entity_id: str, status: str) -> None:
+        previous = self._status.get(entity_id)
         self._status[entity_id] = status
         try:
             await self._redis.set(STATUS_KEY_TMPL.format(entity_id=entity_id), status)
         except Exception:
             logger.exception("Failed to write status to Redis for '%s'", entity_id)
+
+        # Appendix A.8: notify on a transition INTO DEGRADED (not on every
+        # repeated retry-loop failure that re-sets the same status).
+        if status == "DEGRADED" and previous != "DEGRADED":
+            task = asyncio.create_task(
+                send_ntfy_notification(
+                    "Integration DEGRADED",
+                    f"Integration '{entity_id}' transitioned to DEGRADED.",
+                    priority="high",
+                )
+            )
+            self._bg_tasks.add(task)
+            task.add_done_callback(self._bg_tasks.discard)
 
     # ── background retry with exponential backoff (plan §3.2) ───────
     def _schedule_retry(self, row: IntegrationInstance) -> None:
@@ -304,6 +335,46 @@ class Loader:
             with contextlib.suppress(Exception):
                 await pubsub.aclose()
 
+    async def _events_debug_log_listener(self) -> None:
+        """Appendix A.11 Integration Debug Log: mirrors every message
+        published to `qecomp:events` into a per-entity ring buffer
+        (`DEBUG_LOG_KEY_TMPL`) holding the most recent
+        `DEBUG_LOG_MAX_ENTRIES` raw events, most-recent-first, refreshing a
+        `DEBUG_LOG_TTL_SECONDS` TTL on every append so a long-deleted/
+        renamed entity's debug log eventually expires on its own instead of
+        growing forever."""
+        pubsub = self._redis.pubsub()
+        try:
+            await pubsub.subscribe(EVENTS_CHANNEL)
+            async for message in pubsub.listen():
+                if self._shutdown.is_set():
+                    break
+                if message is None or message.get("type") != "message":
+                    continue
+                try:
+                    data = message.get("data")
+                    if isinstance(data, bytes):
+                        data = data.decode("utf-8")
+                    parsed = json.loads(data)
+                    entity_id = parsed.get("entity_id")
+                    if not entity_id:
+                        continue
+                    key = DEBUG_LOG_KEY_TMPL.format(entity_id=entity_id)
+                    await self._redis.lpush(key, data)
+                    await self._redis.ltrim(key, 0, DEBUG_LOG_MAX_ENTRIES - 1)
+                    await self._redis.expire(key, DEBUG_LOG_TTL_SECONDS)
+                except Exception:
+                    logger.exception("Failed to append qecomp:events message to debug log")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("events debug log listener crashed")
+        finally:
+            with contextlib.suppress(Exception):
+                await pubsub.unsubscribe(EVENTS_CHANNEL)
+            with contextlib.suppress(Exception):
+                await pubsub.aclose()
+
     async def reconcile(self) -> None:
         """Diff the live instance set against current Postgres state and
         tear down/spin up instances accordingly — live, with no restart."""
@@ -356,6 +427,11 @@ class Loader:
             with contextlib.suppress(Exception, asyncio.CancelledError):
                 await self._pubsub_task
             self._pubsub_task = None
+        if self._events_debug_task is not None:
+            self._events_debug_task.cancel()
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                await self._events_debug_task
+            self._events_debug_task = None
 
         for entity_id in targets:
             await self._tear_down(entity_id)

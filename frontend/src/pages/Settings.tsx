@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, RefreshCw } from 'lucide-react';
 import { useApiKeys, useCreateApiKey, useRevokeApiKey, useSettings, useUpdateSettings } from '../api/settings';
 import { usePermission } from '../hooks/usePermission';
 import { useUiStore } from '../stores/ui';
@@ -8,6 +8,8 @@ import { PageHeader, Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Input, Label } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
+import { Toggle } from '../components/ui/Toggle';
+import { CopyButton } from '../components/ui/CopyButton';
 
 function settingValue(settings: { key: string; value: Record<string, unknown> }[] | undefined, key: string): Record<string, unknown> {
   return settings?.find((s) => s.key === key)?.value ?? {};
@@ -23,6 +25,10 @@ export function SettingsPage() {
   const robotEvents = settingValue(settings, 'robot_events_api');
   const predictor = settingValue(settings, 'predictor');
   const chromaKey = settingValue(settings, 'chroma_key_defaults');
+  // NOTE (AUDIT_FINDINGS.md 1.9): `ntfy` is a new system_settings key landing
+  // in parallel from a backend agent. Read defensively — `settingValue`
+  // already falls back to `{}` if the key doesn't exist yet.
+  const ntfy = settingValue(settings, 'ntfy');
 
   const [s3Endpoint, setS3Endpoint] = useState('');
   const [s3Bucket, setS3Bucket] = useState('');
@@ -34,6 +40,9 @@ export function SettingsPage() {
   const [ckColour, setCkColour] = useState('#00B140');
   const [ckSimilarity, setCkSimilarity] = useState(0.1);
   const [ckBlend, setCkBlend] = useState(0.05);
+  const [ntfyServerUrl, setNtfyServerUrl] = useState('');
+  const [ntfyTopic, setNtfyTopic] = useState('');
+  const [ntfyEnabled, setNtfyEnabled] = useState(false);
 
   useEffect(() => {
     setS3Endpoint(String(s3.endpoint_url ?? ''));
@@ -46,6 +55,9 @@ export function SettingsPage() {
     setCkColour(String(chromaKey.colour ?? '#00B140'));
     setCkSimilarity(Number(chromaKey.similarity ?? 0.1));
     setCkBlend(Number(chromaKey.blend ?? 0.05));
+    setNtfyServerUrl(String(ntfy.server_url ?? ''));
+    setNtfyTopic(String(ntfy.topic ?? ''));
+    setNtfyEnabled(Boolean(ntfy.enabled ?? false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings]);
 
@@ -56,6 +68,7 @@ export function SettingsPage() {
         robot_events_api: { value: { token: reToken } },
         predictor: { value: { high_potential_threshold_pct: threshold } },
         chroma_key_defaults: { value: { colour: ckColour, similarity: ckSimilarity, blend: ckBlend } },
+        ntfy: { value: { server_url: ntfyServerUrl, topic: ntfyTopic, enabled: ntfyEnabled } },
       },
       {
         onSuccess: () => pushToast('Settings saved', 'success'),
@@ -156,6 +169,35 @@ export function SettingsPage() {
             </div>
           </div>
         </Card>
+
+        <Card>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-vmd-textMuted">
+            Notifications (ntfy)
+          </h2>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label>Enabled</Label>
+              <Toggle checked={ntfyEnabled} onChange={setNtfyEnabled} disabled={!canEdit} />
+            </div>
+            <div>
+              <Label>Server URL</Label>
+              <Input
+                placeholder="https://ntfy.sh"
+                value={ntfyServerUrl}
+                onChange={(e) => setNtfyServerUrl(e.target.value)}
+                disabled={!canEdit}
+              />
+            </div>
+            <div>
+              <Label>Topic</Label>
+              <Input value={ntfyTopic} onChange={(e) => setNtfyTopic(e.target.value)} disabled={!canEdit} />
+            </div>
+            <p className="text-xs text-vmd-textSubtle">
+              Fires on integration DEGRADED, leader failover, automation retry-exhaustion, and video
+              processing failure (Appendix A.8).
+            </p>
+          </div>
+        </Card>
       </div>
 
       {canEdit && (
@@ -165,8 +207,70 @@ export function SettingsPage() {
       )}
 
       <div className="mt-8">
+        <TeleprompterIndexSection canEdit={canEdit} />
+      </div>
+
+      <div className="mt-8">
         <ApiKeysSection canEdit={canEdit} />
       </div>
+    </div>
+  );
+}
+
+/** Appendix B.4 / AUDIT_FINDINGS.md 1.3: the `/prompter` bare index route is
+ * gated on a `prompter_index_token` system setting. This section shows the
+ * current token with copy-to-clipboard, and a "Regenerate" button that
+ * writes a freshly-generated token through the same generic
+ * `PUT /api/v1/settings` mechanism every other section uses — there's no
+ * dedicated rotation endpoint, but the generic settings PUT already
+ * supports replacing the value, which is all rotation requires. Written
+ * defensively since the `prompter_index_token` backend key is landing in
+ * parallel and may not exist yet. */
+function TeleprompterIndexSection({ canEdit }: { canEdit: boolean }) {
+  const { data: settings, isLoading } = useSettings();
+  const updateSettings = useUpdateSettings();
+  const pushToast = useUiStore((s) => s.pushToast);
+
+  const tokenValue = settingValue(settings, 'prompter_index_token');
+  const token = String(tokenValue.token ?? '');
+
+  function regenerate() {
+    const fresh =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID().replace(/-/g, '')
+        : Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    updateSettings.mutate(
+      { prompter_index_token: { value: { token: fresh } } },
+      {
+        onSuccess: () => pushToast('Teleprompter index token regenerated', 'success'),
+        onError: (err) => pushToast(err instanceof Error ? err.message : 'Regenerate failed', 'error'),
+      },
+    );
+  }
+
+  return (
+    <div>
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-vmd-textMuted">
+        Teleprompter Index
+      </h2>
+      <Card>
+        <p className="mb-2 text-xs text-vmd-textSubtle">
+          Gates the bare <code>/prompter</code> index page listing all active timer instances.
+        </p>
+        {isLoading ? (
+          <p className="text-sm text-vmd-textSubtle">Loading…</p>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            <code className="vmd-code-block break-all text-xs">{token || '(not set)'}</code>
+            {token && <CopyButton value={token} />}
+            {canEdit && (
+              <Button variant="ghost" onClick={regenerate} disabled={updateSettings.isPending}>
+                <RefreshCw size={14} /> Regenerate
+              </Button>
+            )}
+          </div>
+        )}
+      </Card>
     </div>
   );
 }

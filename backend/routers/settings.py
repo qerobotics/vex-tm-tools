@@ -14,7 +14,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.dependencies import get_db, require_permission
+from backend.core.audit import log_action
+from backend.core.dependencies import CurrentPrincipal, get_db, require_permission
 from backend.core.security import generate_api_key, hash_api_key
 from backend.models.integration import ZerosPreset
 from backend.models.settings import ApiKey, RolePermission, SystemSetting
@@ -29,6 +30,23 @@ from backend.schemas.settings import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["settings"])
+
+#: Field-name fragments (case-insensitive) that mark a `system_settings.value`
+#: entry as a credential — e.g. the S3 settings group's `secret_key`/
+#: `access_key` and the Robot Events group's `token` (plan §11's Settings
+#: page groups). Redacted before writing to the audit log so credentials
+#: never end up in `audit_log.changes` (plan §17 doesn't require capturing
+#: secret values, only that a change happened).
+_SENSITIVE_FIELD_FRAGMENTS = ("secret", "token", "password", "access_key")
+
+
+def _redact_settings_value(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            field: ("***REDACTED***" if any(frag in field.lower() for frag in _SENSITIVE_FIELD_FRAGMENTS) else v)
+            for field, v in value.items()
+        }
+    return value
 
 
 # ── system_settings (plan §11 / Appendix A.8 / §3.8) ─────────────────────
@@ -47,10 +65,10 @@ async def list_settings(db: Annotated[AsyncSession, Depends(get_db)]) -> list[Sy
 @router.put(
     "/settings",
     response_model=list[SystemSettingRead],
-    dependencies=[Depends(require_permission("settings:edit"))],
 )
 async def update_settings(
     db: Annotated[AsyncSession, Depends(get_db)],
+    principal: Annotated[CurrentPrincipal, Depends(require_permission("settings:edit"))],
     body: dict[str, SystemSettingUpdate] = Body(...),
 ) -> list[SystemSetting]:
     """Upserts one or more `system_settings` rows in a single call, e.g.
@@ -69,6 +87,15 @@ async def update_settings(
     await db.commit()
     for row in rows:
         await db.refresh(row)
+
+    await log_action(
+        db,
+        principal.subject,
+        "update",
+        "settings",
+        ",".join(body.keys()),
+        changes={key: _redact_settings_value(update.value) for key, update in body.items()},
+    )
     return rows
 
 
@@ -89,10 +116,11 @@ async def list_api_keys(db: Annotated[AsyncSession, Depends(get_db)]) -> list[Ap
     "/api-keys",
     response_model=ApiKeyCreateResponse,
     status_code=201,
-    dependencies=[Depends(require_permission("settings:edit"))],
 )
 async def create_api_key(
-    body: ApiKeyCreate, db: Annotated[AsyncSession, Depends(get_db)]
+    body: ApiKeyCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    principal: Annotated[CurrentPrincipal, Depends(require_permission("settings:edit"))],
 ) -> ApiKeyCreateResponse:
     raw_key = generate_api_key()
     row = ApiKey(
@@ -103,8 +131,17 @@ async def create_api_key(
     db.add(row)
     await db.commit()
     await db.refresh(row)
-    # The raw key is shown exactly once (plan Appendix B.7) — never
-    # retrievable again after this response.
+    # The raw key itself is never logged (only shown once to the caller per
+    # plan Appendix B.7) — the audit trail records that a key was created,
+    # by whom, with which name/permissions, not the credential itself.
+    await log_action(
+        db,
+        principal.subject,
+        "create",
+        "api_key",
+        str(row.id),
+        changes={"name": row.name, "permissions": row.permissions},
+    )
     return ApiKeyCreateResponse(**ApiKeyRead.model_validate(row).model_dump(), raw_key=raw_key)
 
 
@@ -112,14 +149,18 @@ async def create_api_key(
     "/api-keys/{key_id}",
     status_code=204,
     response_model=None,
-    dependencies=[Depends(require_permission("settings:edit"))],
 )
-async def revoke_api_key(key_id: UUID, db: Annotated[AsyncSession, Depends(get_db)]) -> None:
+async def revoke_api_key(
+    key_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    principal: Annotated[CurrentPrincipal, Depends(require_permission("settings:edit"))],
+) -> None:
     row = await db.get(ApiKey, key_id)
     if row is None:
         raise HTTPException(status_code=404, detail="API key not found")
     row.revoked = True
     await db.commit()
+    await log_action(db, principal.subject, "delete", "api_key", str(key_id), changes={"name": row.name})
 
 
 # ── role_permissions (plan §11 / §13) ────────────────────────────────────
@@ -140,10 +181,10 @@ async def list_role_permissions(db: Annotated[AsyncSession, Depends(get_db)]) ->
 @router.put(
     "/users/roles",
     response_model=list[RolePermissionRead],
-    dependencies=[Depends(require_permission("settings:edit"))],
 )
 async def replace_role_permissions(
     db: Annotated[AsyncSession, Depends(get_db)],
+    principal: Annotated[CurrentPrincipal, Depends(require_permission("settings:edit"))],
     body: list[RolePermissionRead] = Body(...),
 ) -> list[RolePermission]:
     """Replaces the entire `role_permissions` table with `body` (plan §13's
@@ -159,7 +200,20 @@ async def replace_role_permissions(
     result = await db.execute(
         select(RolePermission).order_by(RolePermission.authentik_group, RolePermission.permission)
     )
-    return list(result.scalars().all())
+    new_rows = list(result.scalars().all())
+
+    # Security-sensitive (plan §11's Users & Roles page directly controls
+    # RBAC): log the full new mapping so "who granted group X permission Y"
+    # is answerable from the audit log, not just "something changed".
+    await log_action(
+        db,
+        principal.subject,
+        "update",
+        "role_permission",
+        "role_permissions",
+        changes={"new_mapping": [{"authentik_group": r.authentik_group, "permission": r.permission} for r in new_rows]},
+    )
+    return new_rows
 
 
 # ── zeros_presets (plan §11) ──────────────────────────────────────────────
