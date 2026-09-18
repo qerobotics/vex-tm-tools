@@ -139,8 +139,6 @@ export interface TriggerResponse {
 }
 
 // ── Integration test-connection (backend `POST /{entity_id}/test`) ──────
-// TODO: confirm exact response shape once the parallel backend wave lands
-// the route (plan finding 1.11 / Integrations page "Test Connection").
 export interface IntegrationTestResult {
   ok: boolean;
   message?: string;

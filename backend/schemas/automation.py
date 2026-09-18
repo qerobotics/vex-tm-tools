@@ -24,6 +24,11 @@ class AutomationFolderCreate(AutomationFolderBase):
     pass
 
 
+class AutomationFolderUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=150)
+    parent_id: UUID | None = None
+
+
 class AutomationFolderRead(AutomationFolderBase):
     model_config = ConfigDict(from_attributes=True)
 

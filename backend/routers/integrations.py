@@ -36,6 +36,7 @@ from backend.schemas.integration import (
     IntegrationInstanceCreate,
     IntegrationInstanceRead,
     IntegrationInstanceUpdate,
+    IntegrationTestResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -442,6 +443,36 @@ async def get_integration_state(entity_id: str) -> dict[str, Any]:
         return {"entity_id": entity_id, "status": loader.get_instance_status(entity_id), "state": {}}
     state = await instance.get_state()
     return {"entity_id": entity_id, "status": loader.get_instance_status(entity_id), "state": state}
+
+
+@router.post(
+    "/{entity_id}/test",
+    response_model=IntegrationTestResult,
+    dependencies=[Depends(require_permission("integrations:read"))],
+)
+async def test_integration_connection(
+    entity_id: str, db: Annotated[AsyncSession, Depends(get_db)]
+) -> IntegrationTestResult:
+    """Plan §12 Integrations page "Test Connection" button (finding 1.11): a
+    lightweight, read-only connectivity check. Reports whether the instance
+    is currently running and able to answer `get_state()`, rather than
+    going through the frozen `call_service()` path — an arbitrary domain
+    service call isn't guaranteed to be side-effect-free, but `get_state()`
+    is part of the `Integration` base contract every domain implements."""
+    await _get_or_404(db, entity_id)
+    instance = loader.get_instance(entity_id)
+    if instance is None:
+        return IntegrationTestResult(
+            ok=False,
+            message="Not running",
+            detail=f"Integration {entity_id!r} is not currently running on this node",
+        )
+    try:
+        await instance.get_state()
+    except Exception as exc:
+        return IntegrationTestResult(ok=False, message="Connection check failed", detail=str(exc))
+    status_str = loader.get_instance_status(entity_id)
+    return IntegrationTestResult(ok=status_str == "CONNECTED", message=status_str)
 
 
 @router.get(

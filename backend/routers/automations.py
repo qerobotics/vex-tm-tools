@@ -33,6 +33,7 @@ from backend.schemas.automation import (
     AutomationCreate,
     AutomationFolderCreate,
     AutomationFolderRead,
+    AutomationFolderUpdate,
     AutomationRead,
     AutomationRunRead,
     AutomationUpdate,
@@ -53,6 +54,23 @@ async def _get_automation_or_404(session: AsyncSession, automation_id: UUID) -> 
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
     return row
+
+
+async def _get_folder_or_404(session: AsyncSession, folder_id: UUID) -> AutomationFolder:
+    result = await session.execute(select(AutomationFolder).where(AutomationFolder.id == folder_id))
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation folder not found")
+    return row
+
+
+def _json_safe(value: object) -> object:
+    """`log_action`'s `changes=` column is JSONB — a raw `UUID` (e.g. from
+    `folder_id`/`parent_id`) isn't JSON-serializable and would fail the
+    audit insert's own commit, which then leaves the request's session in
+    an unusable state for response serialization. Coerce to `str` before
+    logging; `setattr()` onto the row still uses the original typed value."""
+    return str(value) if isinstance(value, UUID) else value
 
 
 def _get_engine(request: Request) -> AutomationEngine | None:
@@ -101,9 +119,68 @@ async def create_folder(
     await session.commit()
     await session.refresh(row)
     await log_action(
-        session, principal.subject, "create", "automation_folder", str(row.id), changes=body.model_dump()
+        session,
+        principal.subject,
+        "create",
+        "automation_folder",
+        str(row.id),
+        changes=body.model_dump(mode="json"),
     )
     return row
+
+
+@router.put(
+    "/folders/{folder_id}",
+    response_model=AutomationFolderRead,
+)
+async def update_folder(
+    folder_id: UUID,
+    body: AutomationFolderUpdate,
+    session: AsyncSession = Depends(get_db),
+    principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
+) -> AutomationFolderRead:
+    row = await _get_folder_or_404(session, folder_id)
+
+    # `name` is NOT NULL — an explicit JSON `null` for it is treated the
+    # same as "not provided" rather than failing at commit (matches
+    # update_automation's rationale for the same pattern above).
+    changed_fields: dict[str, object] = {}
+    for field_name, value in body.model_dump(exclude_unset=True).items():
+        if value is None and field_name == "name":
+            continue
+        setattr(row, field_name, value)
+        changed_fields[field_name] = _json_safe(value)
+
+    await session.commit()
+    await session.refresh(row)
+    await log_action(
+        session, principal.subject, "update", "automation_folder", str(folder_id), changes=changed_fields
+    )
+    return row
+
+
+@router.delete(
+    "/folders/{folder_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+async def delete_folder(
+    folder_id: UUID,
+    session: AsyncSession = Depends(get_db),
+    principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
+) -> None:
+    row = await _get_folder_or_404(session, folder_id)
+    deleted = {"name": row.name, "parent_id": str(row.parent_id) if row.parent_id else None}
+    await session.delete(row)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete a folder that still contains automations or subfolders",
+        ) from None
+    await log_action(session, principal.subject, "delete", "automation_folder", str(folder_id), changes=deleted)
 
 
 # ── Automations CRUD (plan §11 "Automations") ────────────────────────────
@@ -168,7 +245,7 @@ async def update_automation(
         if value is None and field_name in {"alias", "enabled", "trigger_yaml", "action_yaml"}:
             continue
         setattr(row, field_name, value)
-        changed_fields[field_name] = value
+        changed_fields[field_name] = _json_safe(value)
 
     await session.commit()
     await session.refresh(row)
@@ -224,13 +301,15 @@ async def trigger_automation(
 @router.get(
     "/{automation_id}/runs",
     response_model=list[AutomationRunRead],
-    dependencies=[Depends(require_permission("automations:read"))],
+    dependencies=[Depends(require_permission("settings:edit"))],
 )
 async def list_automation_runs(
     automation_id: UUID, session: AsyncSession = Depends(get_db)
 ) -> list[AutomationRunRead]:
     """Appendix A.7's per-automation execution history (also surfaced as one
-    of the three debug views in Appendix A.11)."""
+    of the three debug views in Appendix A.11, which gates all three debug
+    views — this one, Integration Debug Log, Live Event Bus — on
+    `settings:edit`, not `automations:read`)."""
     await _get_automation_or_404(session, automation_id)
     result = await session.execute(
         select(AutomationRun)

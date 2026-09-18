@@ -131,6 +131,45 @@ async def test_folder_crud(app_and_client, cleanup):
     assert resp.status_code == 200
     assert any(f["id"] == folder["id"] for f in resp.json())
 
+    # A `parent_id` in the request body carries a UUID through to
+    # `log_action`'s `changes=` dict; a raw (non-JSON-safe) UUID there
+    # breaks the audit insert and 500s the whole request (regression once
+    # caught live, see `_json_safe` in automations.py).
+    resp = await client.post(
+        "/api/v1/automations/folders", json={"name": "Child Folder", "parent_id": folder["id"]}
+    )
+    assert resp.status_code == 201
+    child = resp.json()
+    folder_ids.append(child["id"])
+    assert child["parent_id"] == folder["id"]
+
+    resp = await client.put(f"/api/v1/automations/folders/{folder['id']}", json={"name": "Renamed"})
+    assert resp.status_code == 200
+    assert resp.json()["name"] == "Renamed"
+
+    resp = await client.put(
+        f"/api/v1/automations/folders/{child['id']}", json={"parent_id": folder["id"]}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["parent_id"] == folder["id"]
+
+    resp = await client.delete(f"/api/v1/automations/folders/{folder['id']}")
+    assert resp.status_code == 400  # still has a child folder
+
+    resp = await client.delete(f"/api/v1/automations/folders/{child['id']}")
+    assert resp.status_code == 204
+    folder_ids.remove(child["id"])
+
+    resp = await client.delete(f"/api/v1/automations/folders/{folder['id']}")
+    assert resp.status_code == 204
+    folder_ids.remove(folder["id"])
+
+    resp = await client.delete(f"/api/v1/automations/folders/{folder['id']}")
+    assert resp.status_code == 404
+
+    resp = await client.put(f"/api/v1/automations/folders/{folder['id']}", json={"name": "Nope"})
+    assert resp.status_code == 404
+
 
 async def test_automation_crud(app_and_client, cleanup):
     _, client, _ = app_and_client
@@ -155,6 +194,21 @@ async def test_automation_crud(app_and_client, cleanup):
     resp = await client.put(f"/api/v1/automations/{created['id']}", json={"alias": "Renamed"})
     assert resp.status_code == 200
     assert resp.json()["alias"] == "Renamed"
+
+    # `folder_id` carries a UUID through `update_automation`'s `changes=`
+    # dict too — same `_json_safe` regression as the folder tests above.
+    resp = await client.post("/api/v1/automations/folders", json={"name": "Reassign Target"})
+    assert resp.status_code == 201
+    target_folder = resp.json()
+    resp = await client.put(
+        f"/api/v1/automations/{created['id']}", json={"folder_id": target_folder["id"]}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["folder_id"] == target_folder["id"]
+    resp = await client.put(f"/api/v1/automations/{created['id']}", json={"folder_id": None})
+    assert resp.status_code == 200
+    resp = await client.delete(f"/api/v1/automations/folders/{target_folder['id']}")
+    assert resp.status_code == 204
 
     resp = await client.delete(f"/api/v1/automations/{created['id']}")
     assert resp.status_code == 204

@@ -37,6 +37,15 @@ class IntegrationInstanceRead(IntegrationInstanceBase):
     updated_at: datetime
 
 
+class IntegrationTestResult(BaseModel):
+    """Response shape for `POST /{entity_id}/test` (plan §12 Integrations
+    page "Test Connection" button, finding 1.11)."""
+
+    ok: bool
+    message: str | None = None
+    detail: str | None = None
+
+
 class ZerosPresetBase(BaseModel):
     preset_number: int
     preset_name: str = Field(..., max_length=100)

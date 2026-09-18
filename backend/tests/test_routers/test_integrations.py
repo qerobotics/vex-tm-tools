@@ -224,6 +224,38 @@ async def test_service_call_on_not_running_instance_returns_503(client, cleanup_
     assert resp.status_code == 503
 
 
+async def test_test_connection_on_unknown_entity_returns_404(client):
+    resp = await client.post(f"/api/v1/integrations/does-not-exist-{uuid.uuid4().hex}/test")
+    assert resp.status_code == 404
+
+
+async def test_test_connection_on_not_running_instance_reports_not_ok(client, cleanup_entities):
+    """No Loader is running in this test process, so `POST /test` (plan
+    §12 Integrations page "Test Connection" button, finding 1.11) must
+    report `ok: false` rather than crash or 503 — it's a read-only status
+    check, not a mutation, so a not-running instance is a normal (if
+    negative) result."""
+    entity_id = _unique_entity_id("atem")
+    cleanup_entities.append(entity_id)
+    create_resp = await client.post(
+        "/api/v1/integrations",
+        json={
+            "entity_id": entity_id,
+            "domain": "atem",
+            "display_name": "ATEM Test",
+            "config": {"ip": "10.0.0.6", "field_to_input": {"1": 1}},
+            "tags": [],
+        },
+    )
+    assert create_resp.status_code == 201
+
+    resp = await client.post(f"/api/v1/integrations/{entity_id}/test")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert "not currently running" in body["detail"]
+
+
 async def test_config_change_published_on_create(client, cleanup_entities, fake_redis):
     """Confirms `config_change` is published to the pub/sub channel the
     Loader hot-reload listener subscribes to (plan §5.2)."""
