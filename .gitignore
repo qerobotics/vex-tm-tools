@@ -21,5 +21,8 @@ storage/popups.json
 # Python virtualenvs / local backend env files (plan Appendix B.1 backend)
 .venv/
 venv/
+.venv-backend/
 .env
 backend/.env
+.coverage
+htmlcov/

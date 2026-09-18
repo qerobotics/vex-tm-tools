@@ -7,24 +7,37 @@ services:
       - cf
     restart: unless-stopped
     
-  vex-tm-manager-tools:
-    container_name: vex-tm-manager-tools
+  # ─────────────────────────────────────────────────────────────────────
+  # QEComp (FastAPI/Postgres/Redis/MinIO stack). Replaces the legacy Flask
+  # app previously deployed here (`vex-tm-manager-tools`, removed per plan
+  # §16's legacy-deletion table alongside `server.py`/`main.py`/etc). Bring
+  # up the full local dev stack with:
+  #   docker compose up -d
+  # or just the infra (if running the backend directly via uvicorn/a venv
+  # for faster iteration) with:
+  #   docker compose up -d postgres redis minio
+  # ─────────────────────────────────────────────────────────────────────
+  app:
+    container_name: qecomp-app
     build:
       context: .
       dockerfile: Dockerfile
     networks:
       cf:
         ipv4_address: 10.65.1.20
-    volumes:
-      - ".:/srv/vtmt"
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     restart: unless-stopped
 
-  # ─────────────────────────────────────────────────────────────────────
-  # QEComp (new FastAPI/Postgres/Redis stack) — local dev infra only.
-  # Container names + host ports are distinct from the legacy app above so
-  # both can run side-by-side. Bring up with:
-  #   docker compose up -d postgres redis minio
-  # ─────────────────────────────────────────────────────────────────────
   postgres:
     container_name: qecomp-postgres
     image: postgres:16-alpine

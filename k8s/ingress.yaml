@@ -1,0 +1,22 @@
+# Per Appendix A.9, the vmd1 cluster's actual ingress mechanism is the
+# **Traefik IngressRoute CRD**, not a standard `networking.k8s.io/v1
+# Ingress` — deliberately using that CRD here rather than the plan §15
+# prose's generic "ingress.yaml" description.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: qecomp
+  namespace: qecomp
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`qerobotics.<tld>`)
+      kind: Rule
+      services:
+        - name: qecomp
+          port: 80
+  tls:
+    # References the existing wildcard cert secret cert-manager already
+    # maintains on vmd1 (Appendix A.9) — not created by this manifest set.
+    secretName: wildcard-vmd1-tls
