@@ -72,14 +72,18 @@ jobs:
       # video test (tests/test_routers/test_teams.py) run instead of
       # self-skipping. GH Actions `services:` can't pass MinIO's required
       # `server /data` command args, so it's started as a plain container
-      # instead.
+      # instead. Pulled from quay.io (MinIO's other official mirror)
+      # rather than Docker Hub — anonymous Docker Hub pulls from GH-hosted
+      # runners' shared IPs routinely hit Hub's rate limit and fail with a
+      # misleading "pull access denied" error unrelated to the image
+      # actually existing.
       - name: Start MinIO
         run: |
           docker run -d --name minio \
             -p 9000:9000 -p 9001:9001 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio server /data --console-address ":9001"
+            quay.io/minio/minio server /data --console-address ":9001"
           for i in $(seq 1 30); do
             curl -sf http://localhost:9000/minio/health/live && break
             sleep 1
@@ -89,7 +93,7 @@ jobs:
         run: |
           docker run --rm --network host \
             -e MC_HOST_local=http://minioadmin:minioadmin@localhost:9000 \
-            minio/mc mb --ignore-existing local/${{ env.S3_BUCKET }}
+            quay.io/minio/mc mb --ignore-existing local/${{ env.S3_BUCKET }}
 
       - name: Alembic migrate
         run: alembic upgrade head

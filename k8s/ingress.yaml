@@ -11,7 +11,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`qerobotics.<tld>`)
+    - match: Host(`vex.kmnet.uk`)
       kind: Rule
       services:
         - name: qecomp

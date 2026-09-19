@@ -1,6 +1,6 @@
 # QEComp backend Deployment (plan §15).
 #
-# HA model (plan §3.1, Appendix A.9): 2 replicas, one pod per node via
+# HA model (plan §3.1, Appendix A.9): 3 replicas, one pod per node via
 # required podAntiAffinity, each running exactly 1 uvicorn worker (see
 # Dockerfile) that contends for a single Redis leader lock
 # (backend.modules.leader.LeaderElection) — only the elected leader runs
@@ -16,7 +16,7 @@ metadata:
   labels:
     app: qecomp
 spec:
-  replicas: 2
+  replicas: 3
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -42,7 +42,7 @@ spec:
               topologyKey: "kubernetes.io/hostname"
       initContainers:
         - name: migrate
-          image: registry.kmnet.uk/qecomp/backend:latest
+          image: ghcr.io/vmd1/vex-tm-tools-priv:latest
           command: ["alembic", "upgrade", "head"]
           envFrom:
             - configMapRef:
@@ -55,7 +55,7 @@ spec:
                   key: POSTGRES_DSN
       containers:
         - name: qecomp
-          image: registry.kmnet.uk/qecomp/backend:latest
+          image: ghcr.io/vmd1/vex-tm-tools-priv:latest
           ports:
             - name: http
               containerPort: 8000

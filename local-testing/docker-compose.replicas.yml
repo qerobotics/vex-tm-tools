@@ -1,0 +1,76 @@
+# 3-replica backend for exercising LeaderElection/HA locally (plan §3.1 —
+# same shape as k8s/deployment.yaml's 2-replica Deployment, just scaled to
+# 3 and run with `docker compose up -d --scale backend=3` instead of a
+# real scheduler). There is no separate frontend server to replicate:
+# the built SPA is served statically by this same FastAPI process
+# (Dockerfile's frontend-builder stage → backend/static/frontend/, see
+# backend/main.py) — so 3 replicas of `backend` already means 3 backend
+# AND 3 frontend replicas, exactly like the real deployment.
+#
+# Bring up everything together:
+#   docker compose -p vex-tm-tools-priv --project-directory local-testing \
+#     -f compose.yml -f local-testing/docker-compose.proxy.yml \
+#     -f local-testing/docker-compose.replicas.yml \
+#     up -d --scale backend=3 postgres redis minio traefik authelia backend
+#
+# Routed via Traefik's Docker provider (labels below), which automatically
+# load-balances across every replica sharing the same service label.
+
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      # Container-network hostnames, overriding the host-process values in
+      # .env (postgres/redis/minio's *published* ports are for host access).
+      POSTGRES_DSN: postgresql+asyncpg://qecomp:qecomp@postgres:5432/qecomp
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://minio:9000
+    volumes:
+      - ./traefik/certs/vex.localhost.crt:/tmp/vex.localhost.crt:ro
+    # httpx (used for OIDC discovery/token exchange) verifies against
+    # certifi's bundle, which doesn't know about our self-signed local CA
+    # by default — append it before starting, same as the venv/certifi
+    # trust step in local-testing/README.md, just done at container start
+    # instead of once on a host venv.
+    command: >
+      sh -c "cat /tmp/vex.localhost.crt >> $$(python -c 'import certifi; print(certifi.where())') &&
+             exec uvicorn backend.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips='*'"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - default
+      - proxy
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      # Same path split as the old file-provider routes.yml: backend-owned
+      # paths under vex.localhost bypass the SPA catch-all.
+      - "traefik.http.routers.qecomp-backend-paths.rule=Host(`vex.localhost`) && (PathPrefix(`/api`) || PathPrefix(`/auth`) || PathPrefix(`/admin_login`) || PathPrefix(`/ws`) || PathPrefix(`/prompter`) || PathPrefix(`/overlay`) || Path(`/healthz`) || Path(`/readyz`))"
+      - "traefik.http.routers.qecomp-backend-paths.entrypoints=websecure"
+      - "traefik.http.routers.qecomp-backend-paths.tls=true"
+      - "traefik.http.routers.qecomp-backend-paths.priority=100"
+      - "traefik.http.routers.qecomp-backend-paths.service=qecomp-backend"
+      # SPA catch-all — same container serves the built frontend statics.
+      - "traefik.http.routers.qecomp-app.rule=Host(`vex.localhost`)"
+      - "traefik.http.routers.qecomp-app.entrypoints=websecure"
+      - "traefik.http.routers.qecomp-app.tls=true"
+      - "traefik.http.routers.qecomp-app.priority=1"
+      - "traefik.http.routers.qecomp-app.service=qecomp-backend"
+      # Direct API access at api.vex.localhost.
+      - "traefik.http.routers.qecomp-api.rule=Host(`api.vex.localhost`)"
+      - "traefik.http.routers.qecomp-api.entrypoints=websecure"
+      - "traefik.http.routers.qecomp-api.tls=true"
+      - "traefik.http.routers.qecomp-api.service=qecomp-backend"
+      - "traefik.http.services.qecomp-backend.loadbalancer.server.port=8000"
+      - "traefik.http.services.qecomp-backend.loadbalancer.healthcheck.path=/healthz"
+      - "traefik.http.services.qecomp-backend.loadbalancer.healthcheck.interval=3s"
+      - "traefik.http.services.qecomp-backend.loadbalancer.healthcheck.timeout=2s"
