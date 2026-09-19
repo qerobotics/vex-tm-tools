@@ -42,10 +42,16 @@ class Settings(BaseSettings):
     OIDC_GROUPS_CLAIM: str = Field(default="groups")
 
     # ── Local emergency admin ───────────────────────────────────────────
-    ADMIN_LOCAL_PASSWORD: str = Field(default="changeme")
+    ADMIN_LOCAL_PASSWORD: str = Field(
+        default="",
+        description="Break-glass admin password. Required to enable /admin_login.",
+    )
 
     # ── Secrets ──────────────────────────────────────────────────────────
-    SECRET_KEY: str = Field(default="dev-insecure-secret-key-change-me")
+    SECRET_KEY: str = Field(
+        default="",
+        description="Signs session cookies + prompter HMAC tokens. Required.",
+    )
     ENCRYPTION_KEY: str = Field(
         default="",
         description="Fernet key (32-byte base64url). Required in production.",

@@ -2,7 +2,12 @@ services:
   cloudflared:
     container_name: cloudflared
     image: cloudflare/cloudflared:latest
-    command: tunnel --no-autoupdate run --token REDACTED-CLOUDFLARE-TUNNEL-TOKEN
+    # Token pulled from .env (untracked) — never hardcode it here, it's a
+    # live credential that lets anyone holding it register as a connector
+    # on the tunnel.
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    env_file:
+      - .env
     networks:
       - cf
     restart: unless-stopped

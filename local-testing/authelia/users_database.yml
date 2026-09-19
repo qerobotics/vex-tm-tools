@@ -11,3 +11,19 @@ users:
     groups:
       - qecomp-admin
       - admins
+  vivaan:
+    disabled: false
+    displayname: "Vivaan"
+    password: "$2b$12$tgYmQb1hmd5Timi/.5h6oeDqPhuYQXlQRv9XBdEMIkbP9kDNSOkEe"
+    email: vivaan@vex.localhost
+    groups:
+      - qecomp-admin
+      - admins
+  avi:
+    disabled: false
+    displayname: "Avi"
+    password: "$2b$12$1QwVhOm/xCh42vboOhFokOKi8VufAXgRacWjcKXNom3//aJEDMPwq"
+    email: avi@vex.localhost
+    groups:
+      - qecomp-admin
+      - admins

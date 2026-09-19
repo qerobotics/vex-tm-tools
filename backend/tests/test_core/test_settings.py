@@ -40,7 +40,14 @@ def test_settings_loads_from_env(monkeypatch):
     assert s.APP_PORT == 9001
 
 
-def test_settings_defaults_are_sane():
+def test_settings_defaults_are_sane(monkeypatch):
+    # Settings(_env_file=None) only skips the .env *file* — it still reads
+    # ambient os.environ, which CI sets S3_ENDPOINT_URL in (job-level, for
+    # the real-MinIO tests elsewhere in this suite). Clear it explicitly so
+    # this test actually exercises the field's default rather than whatever
+    # happens to be in the environment it runs under.
+    monkeypatch.delenv("S3_ENDPOINT_URL", raising=False)
+
     s = Settings(_env_file=None)
 
     assert s.OIDC_GROUPS_CLAIM == "groups"

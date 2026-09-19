@@ -8,8 +8,10 @@ import { PageLayout } from './PageLayout';
 /**
  * Wraps every authenticated route. Runs `/api/v1/auth/whoami` once, pushes
  * the result into `useAuthStore` (plan §C.8.1: auth is "set at login, not
- * refreshed via WS"), and redirects to `/admin_login` if unauthenticated.
- * Also mounts `useCacheSync()` once at this root, per §C.8.3's instruction.
+ * refreshed via WS"), and redirects to `/auth/login` (OIDC) if
+ * unauthenticated — `/admin_login` is the break-glass path, reached via its
+ * own link, not the default. Also mounts `useCacheSync()` once at this
+ * root, per §C.8.3's instruction.
  */
 export function ProtectedLayout() {
   const { data, isLoading } = useWhoAmI();
@@ -37,7 +39,7 @@ export function ProtectedLayout() {
   }
 
   if (!data?.authenticated) {
-    window.location.href = '/admin_login';
+    window.location.href = '/auth/login';
     return null;
   }
 

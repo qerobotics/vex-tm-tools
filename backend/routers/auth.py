@@ -209,8 +209,9 @@ def _set_session_cookie(response: Response, signed_value: str) -> None:
         max_age=SESSION_TTL_SECONDS,
         httponly=True,
         samesite="lax",
-        secure=False,  # Traefik/cert-manager terminates TLS in front of the app (Appendix A.9);
-        # flip to True once the app is only ever reached over HTTPS in prod deployment config.
+        secure=True,  # `Secure` is evaluated by the browser against the page's own origin
+        # scheme, not the backend's internal transport — the app is only ever exposed over
+        # HTTPS (k8s/ingress.yaml's `websecure` entrypoint), so this must always be True.
     )
 
 
@@ -325,6 +326,11 @@ async def admin_login_submit(
     password: str = Form(...),
     redis_client: Any = Depends(get_redis),
 ) -> JSONResponse:
+    # Break-glass path is disabled entirely (not "defaults to a known
+    # password") when ADMIN_LOCAL_PASSWORD is unset — refuse every attempt
+    # up front rather than falling through to a compare against "".
+    if not settings.ADMIN_LOCAL_PASSWORD:
+        raise HTTPException(status_code=503, detail="admin_local login is not configured")
     if username != ADMIN_LOCAL_USER_ID:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     # Constant-time comparison to avoid leaking password-length/prefix
