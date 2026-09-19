@@ -230,6 +230,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 def create_app() -> FastAPI:
+    # Fail loudly at startup rather than silently signing session cookies /
+    # prompter HMAC tokens (backend/core/sessions.py, backend/core/security.py)
+    # with a known default — same "fail on use, don't silently default"
+    # posture as ENCRYPTION_KEY's EncryptionError in backend/core/security.py.
+    if not settings.SECRET_KEY:
+        raise RuntimeError("SECRET_KEY is not set. Refusing to start.")
+
     app = FastAPI(
         title="QEComp",
         version="1.0.0",
@@ -343,9 +350,16 @@ def create_app() -> FastAPI:
             tries), so deep-linking or refreshing on an SPA route like
             `/dashboard` still serves `index.html` (React Router then
             resolves the path client-side) instead of 404ing.
+
+            `full_path` is attacker-controlled, so we resolve and re-check
+            containment under `_FRONTEND_DIST` before serving it (path traversal).
             """
-            candidate = _FRONTEND_DIST / full_path
-            if full_path and candidate.is_file():
+            candidate = (_FRONTEND_DIST / full_path).resolve()
+            if (
+                full_path
+                and candidate.is_file()
+                and candidate.is_relative_to(_FRONTEND_DIST.resolve())
+            ):
                 return FileResponse(candidate)
             return FileResponse(_spa_index)
 

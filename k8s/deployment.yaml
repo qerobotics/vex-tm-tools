@@ -44,6 +44,11 @@ spec:
         - name: migrate
           image: ghcr.io/vmd1/vex-tm-tools-priv:latest
           command: ["alembic", "upgrade", "head"]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
           envFrom:
             - configMapRef:
                 name: qecomp-config
@@ -56,6 +61,11 @@ spec:
       containers:
         - name: qecomp
           image: ghcr.io/vmd1/vex-tm-tools-priv:latest
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
           ports:
             - name: http
               containerPort: 8000

@@ -35,7 +35,11 @@ services:
     # certifi's bundle, which doesn't know about our self-signed local CA
     # by default — append it before starting, same as the venv/certifi
     # trust step in local-testing/README.md, just done at container start
-    # instead of once on a host venv.
+    # instead of once on a host venv. certifi's bundle lives outside /app
+    # (site-packages, owned by root at image build time), so this override
+    # needs root just for this one-time append — local-dev-only, not the
+    # production image's USER.
+    user: root
     command: >
       sh -c "cat /tmp/vex.localhost.crt >> $$(python -c 'import certifi; print(certifi.where())') &&
              exec uvicorn backend.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips='*'"

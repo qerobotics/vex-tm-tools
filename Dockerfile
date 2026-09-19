@@ -48,6 +48,15 @@ COPY alembic.ini ./
 # doesn't exist, so this COPY is the only place the two are wired together.
 COPY --from=frontend-builder /app/frontend/dist backend/static/frontend/
 
+# Drop root after all install/copy steps are done. The app only talks to
+# Postgres/Redis/S3 over the network and writes media temp files via
+# Python's tempfile module (defaults to world-writable /tmp), so no extra
+# writable dirs are needed. UID/GID 1000 matches k8s/deployment.yaml's
+# securityContext.
+RUN groupadd --system --gid 1000 qecomp && useradd --system --uid 1000 --gid qecomp --no-create-home qecomp
+RUN chown -R qecomp:qecomp /app
+USER qecomp
+
 # Exactly 1 worker per pod (Appendix B.1, critical) — multiple workers
 # would each independently run their own LeaderElection/TimerManager/
 # AutomationEngine/Loader instance inside the SAME pod, causing duplicate

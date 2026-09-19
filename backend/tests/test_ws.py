@@ -62,7 +62,11 @@ requires_infra = pytest.mark.skipif(
 
 @requires_infra
 def test_ws_events_receives_published_event():
-    with TestClient(app) as client:
+    # base_url must be https:// — the session cookie is set with `Secure`
+    # (backend/routers/auth.py's `_set_session_cookie`, since the app is only
+    # ever exposed over HTTPS in prod), so an `http://` test client would
+    # legitimately have the cookie dropped by httpx, same as a real browser.
+    with TestClient(app, base_url="https://testserver") as client:
         # `/ws/events` requires an authenticated session (see
         # `routers/ws.py::_ws_is_authenticated`) — log in as `admin_local`
         # first so the session cookie rides along on the WS handshake,
@@ -73,7 +77,11 @@ def test_ws_events_receives_published_event():
         )
         assert login.status_code == 200
 
-        with client.websocket_connect("/ws/events") as ws:
+        # `websocket_connect` hardcodes a `ws://testserver` base regardless of
+        # the client's own base_url, so the Secure session cookie would still
+        # be dropped unless the url passed in is itself absolute with a
+        # `wss://` scheme (httpx's cookie jar treats `ws://` as insecure).
+        with client.websocket_connect("wss://testserver/ws/events") as ws:
             r = redis_sync.Redis.from_url(settings.REDIS_URL, decode_responses=True)
             marker = uuid.uuid4().hex
             msg = {
