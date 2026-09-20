@@ -65,17 +65,43 @@ async def get_cluster_status(
         # docstring) — matching how `_proxy_to_leader` resolves the leader.
         leader_address = await leader.get_leader_address_async()
 
+    # Bug fix: `qecomp:integration:{entity_id}:status` (written by the
+    # *leader's* `Loader`/`Integration._status_hook` — see
+    # `backend/loader.py`) is a plain `SET` with no TTL/expiry. A graceful
+    # demotion (`Loader.teardown_all()`) explicitly rewrites it to
+    # "DISCONNECTED", but an ungraceful leader loss (the pod is killed/
+    # crashes/network-partitions rather than shutting down cleanly — the
+    # exact HA-failover scenario this endpoint needs to report correctly)
+    # never runs that teardown code at all, so the last value the now-dead
+    # leader wrote (typically "CONNECTED") is left behind in Redis
+    # forever — nothing else ever clears or expires it. That previously
+    # meant the dashboard kept reporting "CONNECTED" throughout an entire
+    # leaderless gap even though a real service call would correctly 503
+    # with "Integration '...' is not currently running".
+    #
+    # Fixed here rather than in `LeaderElection`/`Loader` (per plan §C.2
+    # only `Integration`/`Loader` write this key, and there's no reliable
+    # hook that fires on an *ungraceful* leader loss to clear it from the
+    # dying pod's side): `leader_address` above is already a live Redis
+    # read of the *current* lock holder, so `None` means no replica is
+    # currently holding `qecomp:leader:lock` at all — nothing is running
+    # any integration, so cached statuses are stale by definition and must
+    # be reported as unknown/disconnected rather than blindly returned.
+    leader_alive = leader_address is not None
+
     result = await db.execute(select(IntegrationInstance))
     rows = list(result.scalars().all())
 
     integrations: list[dict[str, Any]] = []
     for row in rows:
-        try:
-            status = await redis.get(STATUS_KEY_TMPL.format(entity_id=row.entity_id))
-            if isinstance(status, bytes):
-                status = status.decode("utf-8")
-        except Exception:
-            status = None
+        status: str | None = None
+        if leader_alive:
+            try:
+                status = await redis.get(STATUS_KEY_TMPL.format(entity_id=row.entity_id))
+                if isinstance(status, bytes):
+                    status = status.decode("utf-8")
+            except Exception:
+                status = None
         integrations.append(
             {
                 "entity_id": row.entity_id,

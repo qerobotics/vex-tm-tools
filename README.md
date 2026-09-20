@@ -37,6 +37,18 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 cd frontend && npm install && npm run dev
 ```
 
+Running the backend on the host this way still needs the manual
+`alembic upgrade head` and, on a fresh MinIO, creating the `S3_BUCKET`
+bucket yourself (e.g. via the MinIO console at `http://localhost:9001`).
+
+If instead you bring up the **full stack in Docker** (`docker compose up -d`,
+building and running the `app` service from this repo's `Dockerfile`
+instead of running backend/frontend on the host), both of those steps
+happen automatically: `compose.yml`'s `migrate` service runs
+`alembic upgrade head` and its `bucket-init` service creates `S3_BUCKET` in
+MinIO if it doesn't already exist, both before `app` starts (mirroring
+`k8s/deployment.yaml`'s `migrate` init container for the real deployment).
+
 Visit `http://localhost:5173`, and use the emergency admin login at
 `/admin_login` (username `admin_local`, password from the
 `ADMIN_LOCAL_PASSWORD` env var) — no OIDC provider is required for this

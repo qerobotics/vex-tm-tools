@@ -62,6 +62,34 @@ from backend.routers.ws import manager as ws_manager
 from backend.routers.ws import router as ws_router
 from backend.schemas.health import HealthResponse, ReadyResponse
 
+
+def _configure_logging() -> None:
+    """Configure the root logger (Bug: every `logger.info(...)` call in the
+    app — leader promotion/demotion, "WS closed, reconnecting", integration
+    status transitions, etc. — was previously silently discarded because
+    nothing ever called `logging.basicConfig()`/set a level on the root
+    logger, so Python's default root logger level (WARNING) swallowed them.
+    Only `.warning`/`.exception` calls were ever visible in `docker logs`.
+
+    Configurable via `LOG_LEVEL` (default INFO) so this can be turned down/up
+    per-environment without a code change. This is deliberately a one-time
+    startup call, not a logging framework — a plain `basicConfig` with a
+    timestamp/level/logger-name format is all the app needs.
+    """
+    level_name = settings.LOG_LEVEL.upper()
+    level = getattr(logging, level_name, None)
+    if not isinstance(level, int):
+        level = logging.INFO
+        level_name = "INFO"
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+    )
+    logging.getLogger(__name__).info("Logging configured at level %s", level_name)
+
+
+_configure_logging()
+
 _STATIC_DIR = Path(__file__).parent / "static"
 
 # Wave 4a's built React/Vite SPA (`frontend/`), baked into this location by

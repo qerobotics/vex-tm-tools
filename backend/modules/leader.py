@@ -101,6 +101,14 @@ class LeaderElection:
         # an unreferenced task keeps running until its next checkpoint, not
         # to completion).
         self._bg_tasks: set[asyncio.Task] = set()
+        # Tracks the currently in-flight `on_promoted()` call (run as a
+        # background task — see `_start_promotion` — so a slow promotion
+        # can never block the renewal loop and let the lock's TTL expire
+        # out from under an in-progress promotion). Anything that demotes
+        # (renewal failure, Redis outage, `stop()`) must wait for/cancel
+        # this before running `on_demoted`, so the two callbacks never run
+        # concurrently against the same `app.state` objects.
+        self._promotion_task: asyncio.Task | None = None
 
         # Set by main.py (per §C.2 — only main.py may set these callbacks).
         self.on_promoted: Callable[[], Awaitable] = _noop
@@ -147,6 +155,11 @@ class LeaderElection:
                 logger.exception("Unexpected error while awaiting cancelled election task")
             self._task = None
 
+        # Make sure a background `on_promoted()` (see `_start_promotion`)
+        # isn't still running/starting leader-only services underneath the
+        # shutdown sequence below.
+        await self._await_pending_promotion()
+
         if self._is_leader:
             try:
                 await self._release_lock()
@@ -165,7 +178,50 @@ class LeaderElection:
                     if acquired:
                         self._is_leader = True
                         logger.info("Leader lock acquired by %s", self._lock_value)
-                        await self._safe_call(self.on_promoted)
+                        # Run `on_promoted` as a background task rather than
+                        # `await`-ing it inline here.
+                        #
+                        # Root cause of the "stuck non-leader after cold
+                        # start" bug: `on_promoted` (loader.load_all() +
+                        # starting the timer manager/automation engine/
+                        # scraper/predictor) does real network/DB I/O — DB
+                        # connections, decrypting configs, standing up
+                        # integration clients — which is exactly the work
+                        # that is slowest on a cold boot (first-ever
+                        # connections, cold connection pools, DNS not fully
+                        # warm yet). Previously this coroutine was awaited
+                        # *before* the loop fell through to its renewal
+                        # sleep, so nothing renewed `qecomp:leader:lock`'s
+                        # 30s TTL while promotion was in flight. If
+                        # promotion took longer than `LOCK_TTL_SECONDS`
+                        # (30s) — very plausible on a cold container with a
+                        # handful of integrations to connect — the lock
+                        # would expire in Redis *while this process still
+                        # believed it was leader and was busy promoting*.
+                        # The very next loop iteration's `_try_renew()`
+                        # would then find the key gone/mismatched, log
+                        # "Lost leader lock renewal" and demote — tearing
+                        # down the services that had just started (or were
+                        # still starting) — while the *same* replica
+                        # immediately re-acquired the now-free lock and
+                        # started promoting all over again. Depending on
+                        # how much slower each retried cold-start attempt
+                        # was (e.g. leaked connections from an interrupted
+                        # `on_promoted`/`on_demoted` pair), this could keep
+                        # re-triggering indefinitely without a restart,
+                        # while an external observer sampling `is_leader`/
+                        # the Redis key mid-flap would see exactly the
+                        # reported symptom: the lock key persisting
+                        # (re-acquired immediately after each expiry) while
+                        # `is_leader` reads inconsistently.
+                        #
+                        # Running promotion in the background instead means
+                        # the election loop keeps renewing the lock on
+                        # schedule (every `renew_interval`) regardless of
+                        # how long `on_promoted` takes, so the lock can no
+                        # longer expire out from under an in-progress
+                        # promotion.
+                        self._start_promotion(self.on_promoted)
                     else:
                         await self._sleep(self._renew_interval)
                         backoff = 1
@@ -176,6 +232,11 @@ class LeaderElection:
                         logger.warning(
                             "Lost leader lock renewal for %s — demoting", self._lock_value
                         )
+                        # Wait for any still-in-flight promotion (see
+                        # `_start_promotion`) before demoting, so
+                        # `on_promoted`/`on_demoted` never run concurrently
+                        # against the same `app.state` objects.
+                        await self._await_pending_promotion()
                         # Split-brain protection: tear down before releasing (§3.1).
                         await self._safe_call(self.on_demoted)
                         self._is_leader = False
@@ -194,6 +255,7 @@ class LeaderElection:
                 if self._is_leader:
                     # We can no longer talk to Redis to renew — assume the
                     # lock may have expired. Demote defensively.
+                    await self._await_pending_promotion()
                     await self._safe_call(self.on_demoted)
                     self._is_leader = False
                     self._notify_failover("Redis unavailable")
@@ -232,6 +294,39 @@ class LeaderElection:
         `_RELEASE_SCRIPT` for why this must be a single Lua script rather
         than a GET followed by a DELETE."""
         await self._redis.eval(_RELEASE_SCRIPT, 1, self._lock_key, self._lock_value)
+
+    def _start_promotion(self, callback: Callable[[], Awaitable]) -> None:
+        """Run `on_promoted` as a background task instead of `await`-ing it
+        inline in the election loop — see the long comment at the call site
+        in `_election_loop` for why: it decouples promotion's duration
+        (real DB/network I/O, slowest on a cold boot) from the lock renewal
+        cadence, so a slow promotion can never let the lock's TTL expire
+        out from under it.
+        """
+        task = asyncio.create_task(self._run_promotion(callback))
+        self._promotion_task = task
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+
+    async def _run_promotion(self, callback: Callable[[], Awaitable]) -> None:
+        await self._safe_call(callback)
+
+    async def _await_pending_promotion(self) -> None:
+        """Wait for a background `on_promoted()` started by
+        `_start_promotion` to finish (if one is still running) before
+        proceeding to demote. Without this, a demotion triggered while
+        promotion is still in flight could run `on_demoted` concurrently
+        with `on_promoted` against the same `app.state` objects (e.g.
+        `automation_engine.stop()` racing `automation_engine.start()`).
+        """
+        task = self._promotion_task
+        if task is not None and not task.done():
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.exception("Error awaiting in-flight promotion before demotion")
 
     def _notify_failover(self, reason: str) -> None:
         """Appendix A.8: fire an ntfy notification on unexpected demotion

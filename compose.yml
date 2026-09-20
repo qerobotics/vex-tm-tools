@@ -41,7 +41,60 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      bucket-init:
+        condition: service_completed_successfully
     restart: unless-stopped
+
+  # One-shot init container mirroring k8s/deployment.yaml's `initContainers:
+  # migrate` (same image, same `alembic upgrade head` command) so a fresh
+  # `docker compose up` doesn't leave Postgres with zero tables until an
+  # operator manually execs in and runs migrations. Runs once per `up` and
+  # exits; `app` (and the replicas overlay's `backend`) wait on it via
+  # `condition: service_completed_successfully`.
+  migrate:
+    container_name: qecomp-migrate
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      # Container-network hostname — .env's POSTGRES_DSN points at the
+      # *published* host port (localhost:5433), unreachable from inside
+      # the compose network.
+      POSTGRES_DSN: postgresql+asyncpg://qecomp:qecomp@postgres:5432/qecomp
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # One-shot init step that creates the configured S3_BUCKET in MinIO if it
+  # doesn't already exist, so the first video upload doesn't fail with
+  # NoSuchBucket on a clean `docker compose down -v`. Uses the official
+  # MinIO Client image rather than scripting `curl`/`aws` by hand.
+  bucket-init:
+    container_name: qecomp-bucket-init
+    image: minio/mc:latest
+    env_file:
+      - .env
+    environment:
+      # Container-network hostname — .env's S3_ENDPOINT_URL points at the
+      # *published* host port (localhost:9000), unreachable from inside
+      # the compose network.
+      S3_ENDPOINT_URL: http://minio:9000
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mc alias set local "$$S3_ENDPOINT_URL" "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" &&
+        mc mb --ignore-existing "local/$$S3_BUCKET"
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
 
   postgres:
     container_name: qecomp-postgres

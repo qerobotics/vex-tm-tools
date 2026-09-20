@@ -86,4 +86,10 @@ class AutomationRun(Base):
     status: Mapped[str] = mapped_column(String(20), server_default="success")
     failed_action_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Per-action outcomes (index/status/error for every action actually
+    # attempted in the chain — see `AutomationEngine._execute_action_chain`).
+    # `failed_action_index`/`error` above are kept for backwards
+    # compatibility (they still reflect the *first* failure) but only this
+    # column can tell multiple failed actions apart from one another.
+    action_results: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())

@@ -25,6 +25,13 @@ class TeamProfile(Base):
     raw_video_s3_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     video_360_s3_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     video_processing_status: Mapped[str] = mapped_column(String(20), server_default="NONE")
+    # Short, sanitized human-readable reason set when video_processing_status
+    # transitions to "FAILED" (e.g. "NoSuchBucket: The specified bucket does
+    # not exist"), so `/video/status` can surface something actionable
+    # instead of just "FAILED" with no detail. Never holds a full traceback
+    # or internal filesystem paths (see `_sanitize_processing_error` in
+    # backend/routers/teams.py). Cleared whenever a new upload starts.
+    video_processing_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
     cached_stats: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     extra_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(

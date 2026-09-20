@@ -1120,7 +1120,10 @@ Full detail in `docs/API.md`. Summary:
 - Live-updates via WebSocket for new entries.
 
 ### Settings (`/settings`)
-- **S3 Config:** endpoint, bucket, access key, secret key, region.
+- **S3 Config:** endpoint, public endpoint (optional — externally-reachable
+  URL for signing presigned URLs, e.g. when the endpoint above is an
+  internal/in-cluster hostname like MinIO's), bucket, access key, secret
+  key, region.
 - **Robot Events API:** API token input.
 - **AI Predictor:** high-potential threshold percentage slider.
 - **Chroma Key Defaults:** global defaults for similarity and blend.

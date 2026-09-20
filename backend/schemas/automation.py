@@ -91,6 +91,17 @@ class ScriptRead(ScriptBase):
     updated_at: datetime
 
 
+class ActionResult(BaseModel):
+    """Outcome of a single action within one chain execution (Appendix A.7).
+    One entry per action actually attempted — `status` is `"success"` or
+    `"failed"` (a failed action has already been retried once immediately,
+    per plan Appendix A.7, before landing here as `"failed"`)."""
+
+    index: int
+    status: str
+    error: str | None = None
+
+
 class AutomationRunRead(BaseModel):
     """One row of an automation's execution history (Appendix A.7)."""
 
@@ -103,6 +114,7 @@ class AutomationRunRead(BaseModel):
     status: str
     failed_action_index: int | None = None
     error: str | None = None
+    action_results: list[ActionResult] | None = None
     created_at: datetime
 
 
@@ -121,10 +133,19 @@ class ValidateResponse(BaseModel):
 
 
 class TriggerResponse(BaseModel):
-    """Result of `AutomationEngine.trigger()` (Test Run button, plan §12)."""
+    """Result of `AutomationEngine.trigger()` (Test Run button, plan §12).
+
+    `failed_action_index`/`error` are kept for backwards compatibility and
+    still describe only the *first* action that failed. `actions_executed`
+    is the true count of actions attempted (a failed action is retried once
+    and, if still failing, the chain continues to the rest — Appendix A.7),
+    and `action_results` gives the real per-action breakdown so a caller can
+    tell exactly which actions succeeded vs failed when more than one does.
+    """
 
     automation_id: UUID
     status: str
     failed_action_index: int | None = None
     error: str | None = None
     actions_executed: int = 0
+    action_results: list[ActionResult] = Field(default_factory=list)

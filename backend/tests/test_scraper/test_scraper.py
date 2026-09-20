@@ -273,13 +273,21 @@ async def test_robot_events_fetch_runs_rankings_awards_skills_concurrently_and_t
 
     async def fake_get(url, headers=None, params=None):
         if url == "/teams":
-            return _resp({"data": [{"id": 555, "description": "Bio!", "robot_name": "Bot"}]})
+            return _resp(
+                {"data": [{"id": 555, "description": "Bio!", "robot_name": "Bot", "program": {"id": 900, "name": "VRC"}}]}
+            )
+        if url == "/seasons":
+            assert params == {"program[]": 900, "active": "true"}
+            return _resp({"data": [{"id": 777, "name": "Current Season"}]})
         if url == "/teams/555/rankings":
+            assert params == {"season[]": 777}
             raise RuntimeError("simulated rankings outage")
         if url == "/teams/555/awards":
+            assert params == {"season[]": 777}
             return _resp({"data": [{"title": "Excellence Award"}]})
         if url == "/teams/555/skills":
-            return _resp({"data": [{"rank": 3, "region": "UK"}]})
+            assert params == {"season[]": 777}
+            return _resp({"data": [{"rank": 3, "event": {"id": 1, "name": "E", "code": "RE-VRC-1"}}]})
         raise AssertionError(f"unexpected URL {url}")
 
     mocker.patch.object(scraper._re_http, "get", side_effect=fake_get)
@@ -290,8 +298,9 @@ async def test_robot_events_fetch_runs_rankings_awards_skills_concurrently_and_t
         assert result["previous_rankings"] == []
         # awards/skills succeeded despite rankings failing concurrently.
         assert result["awards"] == [{"title": "Excellence Award"}]
-        assert result["uk_skills_rank"] == 3
+        assert result["skills_rank"] == 3
     finally:
+        await scraper._redis.delete("qecomp:re:season:900")
         if original_value is not None:
             async with session_factory() as session:
                 setting = await session.get(SystemSetting, "robot_events_api")
@@ -311,6 +320,93 @@ async def test_robot_events_fetch_skipped_without_token(scraper, session_factory
         result = await scraper._fetch_from_robot_events("1234A")
         assert result == {}
     finally:
+        if original_value is not None:
+            async with session_factory() as session:
+                setting = await session.get(SystemSetting, "robot_events_api")
+                setting.value = original_value
+                await session.commit()
+
+
+async def test_robot_events_current_season_is_cached_not_refetched(scraper, session_factory, mocker):
+    """Regression test: the current-season lookup must be Redis-cached, not
+    re-issued on every team fetch, since the VEX Events API is strictly
+    rate-limited. Fetching two different teams in the same program should
+    only ever hit /seasons once."""
+    async with session_factory() as session:
+        setting = await session.get(SystemSetting, "robot_events_api")
+        original_value = dict(setting.value) if setting else None
+        setting.value = {"token": "fake-token"}
+        await session.commit()
+
+    def _resp(data):
+        return _FakeResponse(data)
+
+    seasons_call_count = 0
+
+    async def fake_get(url, headers=None, params=None):
+        nonlocal seasons_call_count
+        if url == "/teams":
+            number = params["number[]"]
+            team_id = 555 if number == "1234A" else 556
+            return _resp({"data": [{"id": team_id, "program": {"id": 900, "name": "VRC"}}]})
+        if url == "/seasons":
+            seasons_call_count += 1
+            return _resp({"data": [{"id": 777, "name": "Current Season"}]})
+        if url in ("/teams/555/rankings", "/teams/556/rankings"):
+            assert params == {"season[]": 777}
+            return _resp({"data": []})
+        if url in ("/teams/555/awards", "/teams/556/awards"):
+            return _resp({"data": []})
+        if url in ("/teams/555/skills", "/teams/556/skills"):
+            return _resp({"data": []})
+        raise AssertionError(f"unexpected URL {url}")
+
+    mocker.patch.object(scraper._re_http, "get", side_effect=fake_get)
+
+    try:
+        await scraper._fetch_from_robot_events("1234A")
+        await scraper._fetch_from_robot_events("5678B")
+        assert seasons_call_count == 1
+    finally:
+        await scraper._redis.delete("qecomp:re:season:900")
+        if original_value is not None:
+            async with session_factory() as session:
+                setting = await session.get(SystemSetting, "robot_events_api")
+                setting.value = original_value
+                await session.commit()
+
+
+async def test_robot_events_skips_rankings_awards_skills_when_season_unresolvable(
+    scraper, session_factory, mocker
+):
+    """If the current season can't be resolved, skip rankings/awards/skills
+    entirely rather than falling back to unscoped (multi-season) data — see
+    the comment in `_fetch_from_robot_events`."""
+    async with session_factory() as session:
+        setting = await session.get(SystemSetting, "robot_events_api")
+        original_value = dict(setting.value) if setting else None
+        setting.value = {"token": "fake-token"}
+        await session.commit()
+
+    def _resp(data):
+        return _FakeResponse(data)
+
+    async def fake_get(url, headers=None, params=None):
+        if url == "/teams":
+            return _resp({"data": [{"id": 555, "program": {"id": 901, "name": "VRC"}}]})
+        if url == "/seasons":
+            return _resp({"data": []})  # no active season found
+        raise AssertionError(f"unexpected URL {url} (rankings/awards/skills must not be called)")
+
+    mocker.patch.object(scraper._re_http, "get", side_effect=fake_get)
+
+    try:
+        result = await scraper._fetch_from_robot_events("1234A")
+        assert result["previous_rankings"] == []
+        assert result["awards"] == []
+        assert result["skills_rank"] is None
+    finally:
+        await scraper._redis.delete("qecomp:re:season:901")
         if original_value is not None:
             async with session_factory() as session:
                 setting = await session.get(SystemSetting, "robot_events_api")

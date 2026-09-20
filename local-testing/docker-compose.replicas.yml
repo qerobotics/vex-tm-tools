@@ -15,6 +15,12 @@
 #
 # Routed via Traefik's Docker provider (labels below), which automatically
 # load-balances across every replica sharing the same service label.
+#
+# `backend` depends on compose.yml's `migrate`/`bucket-init` one-shot
+# services (alembic migrations + MinIO bucket creation) via
+# `service_completed_successfully` — `docker compose up` starts those
+# automatically even though they're not named in the command above, since
+# they're dependencies of `backend`.
 
 services:
   backend:
@@ -50,6 +56,10 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      bucket-init:
+        condition: service_completed_successfully
     networks:
       - default
       - proxy

@@ -99,10 +99,11 @@ class ObsIntegration(Integration):
         if self._obs is None:
             raise IntegrationError(f"obs[{self.entity_id}]: not connected")
         try:
-            await asyncio.to_thread(self._obs.call, obs_requests.SetCurrentProgramScene(sceneName=scene_name))
+            resp = await asyncio.to_thread(self._obs.call, obs_requests.SetCurrentProgramScene(sceneName=scene_name))
         except (obs_exceptions.MessageTimeout, obs_exceptions.ConnectionFailure) as exc:
             await self._on_connection_error()
             raise IntegrationError(f"obs[{self.entity_id}]: switch_scene failed: {exc}") from exc
+        self._raise_if_rejected(resp, f"switch_scene(scene_name={scene_name!r})")
         self._current_scene = scene_name
         return {"ok": True, "scene_name": scene_name}
 
@@ -113,11 +114,38 @@ class ObsIntegration(Integration):
         if self._obs is None:
             raise IntegrationError(f"obs[{self.entity_id}]: not connected")
         try:
-            await asyncio.to_thread(self._obs.call, obs_requests.TriggerHotkeyByName(hotkeyName=hotkey_name))
+            resp = await asyncio.to_thread(self._obs.call, obs_requests.TriggerHotkeyByName(hotkeyName=hotkey_name))
         except (obs_exceptions.MessageTimeout, obs_exceptions.ConnectionFailure) as exc:
             await self._on_connection_error()
             raise IntegrationError(f"obs[{self.entity_id}]: trigger_hotkey failed: {exc}") from exc
+        self._raise_if_rejected(resp, f"trigger_hotkey(hotkey_name={hotkey_name!r})")
         return {"ok": True, "hotkey_name": hotkey_name}
+
+    def _raise_if_rejected(self, resp: Any, description: str) -> None:
+        """Transport-level success (`obsws.call()` returning without raising
+        `MessageTimeout`/`ConnectionFailure`) only means a `RequestResponse`
+        frame came back — it does NOT mean OBS actually did what was asked.
+        OBS itself acks/rejects each request via `requestStatus.result`
+        (protocol v5), e.g. `SetCurrentProgramScene` for a scene name that
+        doesn't exist replies with `requestStatus: {result: false, code:
+        400, ...}` over a perfectly healthy connection. Before this check
+        existed, that case was silently swallowed: `_svc_switch_scene`
+        returned `{"ok": True, ...}` regardless, so a bad scene/hotkey name
+        looked identical to success to both automations and operators.
+
+        `obsws.call()` (obs-websocket-py 1.0, see `core.py`) does surface
+        this: it calls `obj.input(responseData, requestStatus['result'])`,
+        which the request object stores as `.status` (bool). It does
+        *not*, however, forward `requestStatus['code']`/`comment` to
+        callers — those numeric/text details never leave the library, so
+        they can't be included here even though OBS sent them.
+        """
+        if getattr(resp, "status", True) is False:
+            raise IntegrationError(
+                f"obs[{self.entity_id}]: OBS rejected request {description} "
+                "(requestStatus.result was false — the request was received "
+                "but OBS declined it, e.g. an unknown scene/hotkey name)"
+            )
 
     async def _on_connection_error(self) -> None:
         # obs-websocket-py raises websocket-client's ConnectionClosedException

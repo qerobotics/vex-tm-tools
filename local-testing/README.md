@@ -17,6 +17,12 @@ reserved for loopback, RFC 6761) — no `/etc/hosts` edits needed.
 docker compose -f compose.yml -f local-testing/docker-compose.proxy.yml up -d
 ```
 
+That also brings up `compose.yml`'s `app` service (the full stack built
+from this repo's `Dockerfile`), along with its `migrate` and `bucket-init`
+one-shot dependencies — Postgres migrations and MinIO bucket creation both
+happen automatically, no manual `alembic upgrade head` or MinIO console
+click-through needed on a clean `docker compose down -v`.
+
 Then run the backend and frontend yourself (they run on the host, not in
 this compose file — Traefik reaches them via `host.docker.internal`):
 

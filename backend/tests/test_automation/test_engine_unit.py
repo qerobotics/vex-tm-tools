@@ -288,7 +288,7 @@ async def test_action_fails_after_retry_but_chain_continues(engine, patch_loader
         {"service": "atem.switch_input", "target": "atem.main_switcher", "data": {}},
         {"service": "zeros.set_preset", "target": "zeros.lighting_board", "data": {}},
     ]
-    ok, error, failed_index, executed = await engine._execute_action_chain(actions, {})
+    ok, error, failed_index, executed, action_results = await engine._execute_action_chain(actions, {})
 
     assert ok is False
     assert failed_index == 0
@@ -296,6 +296,11 @@ async def test_action_fails_after_retry_but_chain_continues(engine, patch_loader
     assert executed == 2  # both actions ran despite the first one failing
     assert len(failing.calls) == 2  # one retry attempted
     assert len(succeeding.calls) == 1  # second action still executed
+    assert action_results == [
+        {"index": 0, "status": "failed", "error": action_results[0]["error"]},
+        {"index": 1, "status": "success", "error": None},
+    ]
+    assert action_results[0]["error"] is not None
 
 
 # ── Delay: never blocks the engine loop ──────────────────────────────────
@@ -311,7 +316,7 @@ async def test_delay_action_does_not_block_and_continuation_runs_later(engine, p
     ]
 
     start = time.monotonic()
-    ok, error, failed_index, executed = await engine._execute_action_chain(actions, {})
+    ok, error, failed_index, executed, action_results = await engine._execute_action_chain(actions, {})
     elapsed = time.monotonic() - start
 
     assert ok is True
@@ -445,7 +450,7 @@ async def test_inline_condition_action_stops_chain(engine, patch_loader):
         {"condition": "{{ False }}"},
         {"service": "zeros.set_preset", "target": "zeros.lighting_board", "data": {}},
     ]
-    ok, err, failed_index, executed = await engine._execute_action_chain(actions, {})
+    ok, err, failed_index, executed, action_results = await engine._execute_action_chain(actions, {})
     assert ok is True
     assert err is None
     assert executed == 1  # chain stopped at the condition; second action never ran

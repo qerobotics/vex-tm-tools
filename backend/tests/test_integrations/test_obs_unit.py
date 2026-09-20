@@ -25,11 +25,17 @@ class FakeRequest:
     """Mimics obswebsocket.requests' dynamically-generated request objects."""
 
     fail_with: Exception | None = None
+    # Mimics `requestStatus.result` as obs-websocket-py 1.0's `obsws.call()`
+    # forwards it via `obj.input(responseData, requestStatus['result'])`
+    # (see obswebsocket/core.py) — True unless a test opts a specific
+    # request name into being rejected by OBS at the protocol level.
+    reject: bool = False
 
     def __init__(self, **kwargs: Any) -> None:
         self.name = type(self).__name__
         self.dataout = kwargs
         self.datain: dict[str, Any] = {}
+        self.status: bool | None = None
 
 
 class GetSceneList(FakeRequest):
@@ -77,6 +83,13 @@ class FakeObsWs:
     def call(self, request: FakeRequest) -> FakeRequest:
         if request.fail_with is not None:
             raise request.fail_with
+        if request.reject:
+            # OBS received the request fine (no transport error) but
+            # rejected it at the protocol level, e.g. requestStatus:
+            # {result: false, code: 400} for an unknown scene/hotkey name.
+            request.datain = {}
+            request.status = False
+            return request
         if isinstance(request, GetSceneList):
             request.datain = {"scenes": self.scenes, "currentProgramSceneName": self.current_scene}
         elif isinstance(request, SetCurrentProgramScene):
@@ -84,6 +97,7 @@ class FakeObsWs:
             request.datain = {}
         elif isinstance(request, TriggerHotkeyByName):
             request.datain = {}
+        request.status = True
         return request
 
 
@@ -92,6 +106,9 @@ def patch_obsws(monkeypatch):
     GetSceneList.fail_with = None
     SetCurrentProgramScene.fail_with = None
     TriggerHotkeyByName.fail_with = None
+    GetSceneList.reject = False
+    SetCurrentProgramScene.reject = False
+    TriggerHotkeyByName.reject = False
     monkeypatch.setattr(obs_module, "obsws", FakeObsWs)
     monkeypatch.setattr(obs_module, "obs_requests", FakeObsRequestsModule)
     yield
@@ -140,6 +157,28 @@ async def test_switch_scene_calls_set_current_program_scene(redis_client):
         await integration.teardown()
 
 
+async def test_switch_scene_raises_when_obs_rejects_request(redis_client):
+    """OBS acks `SetCurrentProgramScene` for an unknown scene name with a
+    transport-level-successful reply whose `requestStatus.result` is
+    false (protocol v5). Before this was fixed, `_svc_switch_scene` never
+    looked past the transport layer and returned `{"ok": True, ...}`
+    regardless — an automation/operator had no way to tell the scene
+    switch actually failed."""
+    integration = ObsIntegration("obs.test", _make_config(), redis_client, None)
+    await integration.setup()
+    try:
+        SetCurrentProgramScene.reject = True
+        with pytest.raises(IntegrationError):
+            await integration.call_service("switch_scene", {"scene_name": "Nonexistent Scene"})
+        # A rejected request is not a connection failure, so it must not
+        # trigger the reconnect/DEGRADED path `_on_connection_error` covers.
+        assert integration._obs.connected is True
+        assert integration._obs.reconnect_calls == 0
+    finally:
+        SetCurrentProgramScene.reject = False
+        await integration.teardown()
+
+
 async def test_switch_scene_requires_scene_name(redis_client):
     integration = ObsIntegration("obs.test", _make_config(), redis_client, None)
     await integration.setup()
@@ -157,6 +196,20 @@ async def test_trigger_hotkey_calls_correct_request(redis_client):
         result = await integration.call_service("trigger_hotkey", {"hotkey_name": "StartRecording"})
         assert result == {"ok": True, "hotkey_name": "StartRecording"}
     finally:
+        await integration.teardown()
+
+
+async def test_trigger_hotkey_raises_when_obs_rejects_request(redis_client):
+    """Same `requestStatus.result: false` handling as switch_scene, for
+    `TriggerHotkeyByName` (e.g. an unknown hotkey name)."""
+    integration = ObsIntegration("obs.test", _make_config(), redis_client, None)
+    await integration.setup()
+    try:
+        TriggerHotkeyByName.reject = True
+        with pytest.raises(IntegrationError):
+            await integration.call_service("trigger_hotkey", {"hotkey_name": "NoSuchHotkey"})
+    finally:
+        TriggerHotkeyByName.reject = False
         await integration.teardown()
 
 

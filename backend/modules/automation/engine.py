@@ -331,9 +331,11 @@ class AutomationEngine:
         state_cache = await self._build_state_cache()
         eval_context = self._build_manual_context(automation_id, extra, state_cache)
 
-        ok, error, failed_index, executed = await self._execute_action_chain(automation.actions, eval_context)
+        ok, error, failed_index, executed, action_results = await self._execute_action_chain(
+            automation.actions, eval_context
+        )
         status = "success" if ok else "failed"
-        await self._log_run(automation.id, extra, status, failed_index, error)
+        await self._log_run(automation.id, extra, status, failed_index, error, action_results)
         await self._touch_last_triggered(automation.id)
         return {
             "automation_id": automation.id,
@@ -341,6 +343,7 @@ class AutomationEngine:
             "failed_action_index": failed_index,
             "error": error,
             "actions_executed": executed,
+            "action_results": action_results,
         }
 
     # ── YAML parsing ─────────────────────────────────────────────────────
@@ -535,23 +538,30 @@ class AutomationEngine:
 
     async def _execute_action_chain(
         self, actions: list[dict[str, Any]], context: dict[str, Any]
-    ) -> tuple[bool, str | None, int | None, int]:
+    ) -> tuple[bool, str | None, int | None, int, list[dict[str, Any]]]:
         """Runs `actions` in order.
 
         Per Appendix A.7: a failing action is retried once (inside the
         per-action helpers below), then execution *continues* to the next
-        action regardless of outcome — only the first failure is reported
-        (status/failed_action_index/error), all actions still run. The two
-        exceptions: `delay` hands the remainder of the chain to a background
-        `asyncio.create_task()` and returns immediately (plan §5.8 point 3 —
-        never block the engine loop), and an inline `condition` action that
-        evaluates false deliberately halts the chain (not a failure).
+        action regardless of outcome — every action still runs, and every
+        one's outcome is recorded in the returned `action_results` list (not
+        just the first failure) so a chain with several failing actions
+        doesn't hide all but one of them. The two exceptions: `delay` hands
+        the remainder of the chain to a background `asyncio.create_task()`
+        and returns immediately (plan §5.8 point 3 — never block the engine
+        loop), and an inline `condition` action that evaluates false
+        deliberately halts the chain (not a failure).
 
-        Returns `(ok, error, failed_action_index, actions_executed)`.
+        Returns `(ok, error, failed_action_index, actions_executed, action_results)`,
+        where `error`/`failed_action_index` describe only the *first*
+        failure (kept for backwards compatibility) and `action_results` is
+        `[{"index": int, "status": "success" | "failed", "error": str | None}, ...]`
+        for every action actually attempted.
         """
         first_failure_idx: int | None = None
         first_failure_err: str | None = None
         executed = 0
+        action_results: list[dict[str, Any]] = []
         idx = 0
         while idx < len(actions):
             action = actions[idx]
@@ -561,11 +571,14 @@ class AutomationEngine:
                     remaining = actions[idx + 1 :]
                     asyncio.create_task(self._run_delayed_continuation(delay_s, remaining, context))
                     executed += 1
+                    action_results.append({"index": idx, "status": "success", "error": None})
                     break
                 if "condition" in action:
                     executed += 1
                     if not eval_bool(action["condition"], context):
+                        action_results.append({"index": idx, "status": "success", "error": None})
                         break
+                    action_results.append({"index": idx, "status": "success", "error": None})
                     idx += 1
                     continue
                 if "repeat" in action:
@@ -577,18 +590,20 @@ class AutomationEngine:
                 else:
                     ok, err = False, f"Unknown action type at index {idx}: {action!r}"
                 executed += 1
+                action_results.append({"index": idx, "status": "success" if ok else "failed", "error": err})
                 if not ok and first_failure_idx is None:
                     first_failure_idx = idx
                     first_failure_err = err
             except Exception as exc:  # never let one bad action kill the whole chain/engine
                 logger.exception("Unhandled error executing action %d", idx)
                 executed += 1
+                action_results.append({"index": idx, "status": "failed", "error": str(exc)})
                 if first_failure_idx is None:
                     first_failure_idx = idx
                     first_failure_err = str(exc)
             idx += 1
 
-        return (first_failure_idx is None), first_failure_err, first_failure_idx, executed
+        return (first_failure_idx is None), first_failure_err, first_failure_idx, executed, action_results
 
     async def _run_delayed_continuation(
         self, delay_s: float, remaining_actions: list[dict[str, Any]], context: dict[str, Any]
@@ -610,7 +625,7 @@ class AutomationEngine:
         if "count" in spec:
             count = int(render_value(spec["count"], context))
             for _ in range(max(0, count)):
-                ok, err, _, _ = await self._execute_action_chain(sequence, context)
+                ok, err, _, _, _ = await self._execute_action_chain(sequence, context)
                 if not ok and first_err is None:
                     first_err = err
             return first_err is None, first_err
@@ -618,7 +633,7 @@ class AutomationEngine:
         if "while" in spec:
             iterations = 0
             while iterations < _MAX_REPEAT_WHILE_ITERATIONS and eval_bool(spec["while"], context):
-                ok, err, _, _ = await self._execute_action_chain(sequence, context)
+                ok, err, _, _, _ = await self._execute_action_chain(sequence, context)
                 if not ok and first_err is None:
                     first_err = err
                 iterations += 1
@@ -644,7 +659,7 @@ class AutomationEngine:
         sub_context = dict(context)
         sub_context["vars"] = _wrap(extra_data)
 
-        ok, err, _, _ = await self._execute_action_chain(script.actions, sub_context)
+        ok, err, _, _, _ = await self._execute_action_chain(script.actions, sub_context)
         return ok, err
 
     async def _do_service_action(self, action: dict[str, Any], context: dict[str, Any]) -> tuple[bool, str | None]:
@@ -728,10 +743,12 @@ class AutomationEngine:
             if not self._conditions_pass(automation.conditions, context):
                 continue
 
-            ok, error, failed_index, executed = await self._execute_action_chain(automation.actions, context)
+            ok, error, failed_index, executed, action_results = await self._execute_action_chain(
+                automation.actions, context
+            )
             status = "success" if ok else "failed"
             try:
-                await self._log_run(automation.id, event.model_dump(), status, failed_index, error)
+                await self._log_run(automation.id, event.model_dump(), status, failed_index, error, action_results)
                 await self._touch_last_triggered(automation.id)
                 if status == "failed":
                     # Appendix A.8: notify once the retry (Appendix A.7) is
@@ -814,6 +831,7 @@ class AutomationEngine:
         status: str,
         failed_action_index: int | None,
         error: str | None,
+        action_results: list[dict[str, Any]] | None = None,
     ) -> None:
         async with self._session_factory() as session:
             session.add(
@@ -823,6 +841,7 @@ class AutomationEngine:
                     status=status,
                     failed_action_index=failed_action_index,
                     error=error,
+                    action_results=action_results,
                 )
             )
             await session.commit()

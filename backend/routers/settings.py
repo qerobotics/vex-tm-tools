@@ -6,7 +6,7 @@ Thin CRUD router over `system_settings`, `api_keys`, `role_permissions`, and
 """
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException
@@ -15,8 +15,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.audit import log_action
-from backend.core.dependencies import CurrentPrincipal, get_db, require_permission
+from backend.core.dependencies import CurrentPrincipal, get_db, get_redis, require_permission
 from backend.core.security import generate_api_key, hash_api_key
+from backend.core.sessions import delete_sessions_for_user
 from backend.models.integration import ZerosPreset
 from backend.models.settings import ApiKey, RolePermission, SystemSetting
 from backend.schemas.integration import ZerosPresetCreate, ZerosPresetRead
@@ -127,6 +128,7 @@ async def create_api_key(
         name=body.name,
         key_hash=hash_api_key(raw_key),
         permissions=body.permissions,
+        created_by=principal.subject,
     )
     db.add(row)
     await db.commit()
@@ -214,6 +216,42 @@ async def replace_role_permissions(
         changes={"new_mapping": [{"authentik_group": r.authentik_group, "permission": r.permission} for r in new_rows]},
     )
     return new_rows
+
+
+@router.post(
+    "/users/{user_id}/invalidate-session",
+    status_code=204,
+    response_model=None,
+)
+async def invalidate_user_session(
+    user_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    principal: Annotated[CurrentPrincipal, Depends(require_permission("settings:edit"))],
+    redis_client: Any = Depends(get_redis),
+) -> None:
+    """Force-logs-out `user_id` by deleting their session key(s) from Redis
+    immediately (plan Appendix B.9's Users page "force session invalidation").
+
+    There's no `users` table (identity comes entirely from OIDC groups/claims
+    resolved at login, per Appendix B.9) — `user_id` is the OIDC `sub`
+    (or `admin_local`) recorded on the session at `/auth/callback` /
+    `/admin_login`, and "does this user exist" means "do they have an active
+    session to invalidate"."""
+    deleted = await delete_sessions_for_user(redis_client, user_id)
+    if deleted == 0:
+        raise HTTPException(status_code=404, detail="No active session found for that user")
+
+    # Security-sensitive (an admin is forcibly ending another user's
+    # session): log who did it, to whom, and how many session keys were
+    # removed, matching this router's role_permission logging above.
+    await log_action(
+        db,
+        principal.subject,
+        "invalidate_session",
+        "user",
+        user_id,
+        changes={"sessions_deleted": deleted},
+    )
 
 
 # ── zeros_presets (plan §11) ──────────────────────────────────────────────

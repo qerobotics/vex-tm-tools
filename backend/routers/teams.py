@@ -49,6 +49,25 @@ from backend.schemas.team import (
 
 logger = logging.getLogger(__name__)
 
+_MAX_PROCESSING_ERROR_LEN = 300
+
+
+def _sanitize_processing_error(exc: BaseException) -> str:
+    """Reduces an exception to a short, single-line, caller-safe message.
+
+    The full exception (e.g. `botocore.errorfactory.NoSuchBucket`) is always
+    logged server-side with `logger.exception(...)`; only this condensed
+    form is ever persisted to `video_processing_error` / returned from
+    `/video/status`, so multi-line tracebacks and local filesystem paths
+    (e.g. the `tempfile.mkdtemp()` dir used during processing) never reach
+    the API response.
+    """
+    message = str(exc).strip() or type(exc).__name__
+    message = message.splitlines()[0].strip()
+    if len(message) > _MAX_PROCESSING_ERROR_LEN:
+        message = message[: _MAX_PROCESSING_ERROR_LEN - 3] + "..."
+    return message
+
 router = APIRouter(prefix="/api/v1/teams", tags=["teams"])
 
 _ALLOWED_VIDEO_EXTENSIONS = {"mp4", "mov"}
@@ -145,6 +164,7 @@ async def get_video_status(number: str, db: Annotated[AsyncSession, Depends(get_
         team_number=number,
         video_processing_status=team.video_processing_status,
         video_360_s3_key=team.video_360_s3_key,
+        error=team.video_processing_error,
     )
 
 
@@ -182,6 +202,7 @@ async def upload_team_video(
             await out.write(chunk)
 
     team.video_processing_status = "PROCESSING"
+    team.video_processing_error = None
     await db.commit()
 
     await log_action(
@@ -270,12 +291,13 @@ async def _process_and_upload_video(
                 team.video_360_s3_key = processed_key
                 team.video_processing_status = "DONE"
                 await session.commit()
-    except Exception:
+    except Exception as exc:
         logger.exception("Video processing failed for team %s", team_number)
         async with async_session_factory() as session:
             team = await session.get(TeamProfile, team_number)
             if team is not None:
                 team.video_processing_status = "FAILED"
+                team.video_processing_error = _sanitize_processing_error(exc)
                 await session.commit()
     finally:
         for path in (input_path, output_path):

@@ -38,7 +38,9 @@ import json
 import logging
 import statistics
 import time
+from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from sqlalchemy import select
@@ -46,16 +48,27 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.core.redis import redis_client as default_redis_client
+from backend.core.security import decrypt
 from backend.models.integration import IntegrationInstance
 from backend.models.settings import SystemSetting
 from backend.models.team import TeamProfile
+from backend.modules.integrations.vex_tm.integration import _host_header, _sign, _string_to_sign
 from backend.schemas.events import EventBusMessage
 
 logger = logging.getLogger(__name__)
 
 EVENTS_CHANNEL = "qecomp:events"
 TEAM_PROFILE_CACHE_TTL = 60 * 60 * 24  # 24h, per plan §5.11 / §8.
-ROBOT_EVENTS_BASE_URL = "https://www.robotevents.com/api/v2"
+# The VEX Events API is strictly rate-limited, so the resolved "current
+# season" id for a program is cached rather than re-fetched on every team
+# lookup — a season practically never changes mid-cache-window, and this
+# turns what would otherwise be one extra `/seasons` call per uncached team
+# fetch into (at most) one per program per day.
+CURRENT_SEASON_CACHE_TTL = 60 * 60 * 24  # 24h
+# RobotEvents was renamed/moved to the VEX Events API; the resource paths,
+# "data" response envelope, and Bearer-token auth are unchanged (verified
+# against https://events.vex.com/api/v2/swagger.yml) — only the host moved.
+ROBOT_EVENTS_BASE_URL = "https://events.vex.com/api/v2"
 
 
 def _team_cache_key(team_number: str) -> str:
@@ -195,8 +208,11 @@ class Scraper:
 
     # ── TM REST fetching ─────────────────────────────────────────────────
 
-    async def _get_tm_base_url_and_token(self, tm_entity_id: str) -> tuple[str | None, str | None]:
+    async def _get_tm_base_url_and_token(
+        self, tm_entity_id: str
+    ) -> tuple[str | None, str | None, str | None]:
         base_url: str | None = None
+        api_key: str | None = None
         async with self._session_factory() as session:
             result = await session.execute(
                 select(IntegrationInstance).where(IntegrationInstance.entity_id == tm_entity_id)
@@ -204,17 +220,61 @@ class Scraper:
             instance = result.scalar_one_or_none()
             if instance is not None:
                 base_url = instance.config.get("base_url")
+                # `api_key` is a `secret: true` manifest field (see
+                # manifest.yaml) — it's stored encrypted in
+                # `IntegrationInstance.config` and only decrypted by
+                # `loader.py` when constructing the live `VexTmIntegration`
+                # instance. This client reads the DB row directly, so it
+                # must decrypt it itself before using it to sign requests.
+                raw_api_key = instance.config.get("api_key")
+                if raw_api_key:
+                    try:
+                        api_key = decrypt(raw_api_key)
+                    except Exception:
+                        logger.exception(
+                            "Failed to decrypt api_key for TM instance %s", tm_entity_id
+                        )
         token = await self._redis.get(_tm_token_key(tm_entity_id))
-        return base_url, token
+        return base_url, token, api_key
 
-    async def _tm_get(self, base_url: str, token: str | None, path: str) -> Any:
+    async def _tm_get(
+        self,
+        base_url: str,
+        token: str | None,
+        api_key: str | None,
+        path: str,
+        envelope_key: str | None = None,
+    ) -> Any:
+        """Signed TM REST GET (per docs/modules/VEX_API_DOCS.md "Request
+        Signing"): every TM API request must carry `x-tm-date`/
+        `x-tm-signature` headers, not just the bearer token. Reuses the same
+        HMAC helpers `VexTmIntegration._get` uses rather than duplicating the
+        signing logic.
+
+        Every TM REST resource wraps its payload in an envelope object keyed
+        by the resource name (`{"teams": [...]}`, `{"rankings": [...]}`,
+        `{"skillsRankings": [...]}`, `{"matches": [...]}`, `{"event": {...}}`)
+        per the docs — pass `envelope_key` to unwrap it; the caller gets the
+        actual list/object rather than the envelope dict itself.
+        """
+        url = base_url.rstrip("/") + path
+        parsed = urlparse(base_url)
+        host = _host_header(parsed.hostname, parsed.scheme, parsed.port)
         headers = {"Authorization": f"Bearer {token}"} if token else {}
-        resp = await self._tm_http.get(base_url.rstrip("/") + path, headers=headers)
+        if api_key and token:
+            date = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
+            signature = _sign(api_key, _string_to_sign("GET", path, token, host, date))
+            headers["x-tm-date"] = date
+            headers["x-tm-signature"] = signature
+        resp = await self._tm_http.get(url, headers=headers)
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+        if envelope_key is not None and isinstance(data, dict):
+            return data.get(envelope_key)
+        return data
 
     async def _fetch_from_tm(self, team_number: str, tm_entity_id: str) -> dict[str, Any]:
-        base_url, token = await self._get_tm_base_url_and_token(tm_entity_id)
+        base_url, token, api_key = await self._get_tm_base_url_and_token(tm_entity_id)
         if not base_url:
             logger.warning(
                 "No base_url configured for TM instance %s; skipping TM fetch for team %s",
@@ -224,7 +284,7 @@ class Scraper:
             return {}
 
         try:
-            teams = await self._tm_get(base_url, token, "/api/teams")
+            teams = await self._tm_get(base_url, token, api_key, "/api/teams", envelope_key="teams") or []
         except Exception:
             logger.exception("Failed to fetch /api/teams from %s", tm_entity_id)
             teams = []
@@ -243,15 +303,24 @@ class Scraper:
         result: dict[str, Any] = {"team_row": team_row or {}}
 
         try:
-            result["event"] = await self._tm_get(base_url, token, "/api/event")
+            result["event"] = (
+                await self._tm_get(base_url, token, api_key, "/api/event", envelope_key="event") or {}
+            )
         except Exception:
             logger.exception("Failed to fetch /api/event from %s", tm_entity_id)
             result["event"] = {}
 
         if division_id is not None:
             try:
-                rankings = await self._tm_get(
-                    base_url, token, f"/api/rankings/{division_id}/QUAL"
+                rankings = (
+                    await self._tm_get(
+                        base_url,
+                        token,
+                        api_key,
+                        f"/api/rankings/{division_id}/QUAL",
+                        envelope_key="rankings",
+                    )
+                    or []
                 )
                 result["ranking"] = next(
                     (
@@ -267,7 +336,12 @@ class Scraper:
                 result["ranking"] = None
 
             try:
-                matches = await self._tm_get(base_url, token, f"/api/matches/{division_id}")
+                matches = (
+                    await self._tm_get(
+                        base_url, token, api_key, f"/api/matches/{division_id}", envelope_key="matches"
+                    )
+                    or []
+                )
                 result["matches"] = self._extract_team_matches(matches, team_number)
             except Exception:
                 logger.exception("Failed to fetch matches from %s", tm_entity_id)
@@ -277,7 +351,10 @@ class Scraper:
             result["matches"] = []
 
         try:
-            skills = await self._tm_get(base_url, token, "/api/skills")
+            skills = (
+                await self._tm_get(base_url, token, api_key, "/api/skills", envelope_key="skillsRankings")
+                or []
+            )
             result["skills"] = [
                 s
                 for s in skills
@@ -331,6 +408,37 @@ class Scraper:
                 return None
             return (setting.value or {}).get("token") or None
 
+    async def _get_current_season_id(self, program_id: int, headers: dict[str, str]) -> int | None:
+        """Resolves the active season id for a program, via
+        `GET /seasons?program[]=<id>&active=true` — Redis-cached (see
+        `CURRENT_SEASON_CACHE_TTL`) since this only needs to change once a
+        season, not once per team fetch, and the API is strictly
+        rate-limited."""
+        cache_key = f"qecomp:re:season:{program_id}"
+        cached = await self._redis.get(cache_key)
+        if cached:
+            try:
+                return int(cached)
+            except (TypeError, ValueError):
+                pass
+
+        try:
+            resp = await self._re_http.get(
+                "/seasons",
+                params={"program[]": program_id, "active": "true"},
+                headers=headers,
+            )
+            resp.raise_for_status()
+            seasons = resp.json().get("data", [])
+        except Exception:
+            logger.exception("Failed to resolve current season for program %s", program_id)
+            return None
+
+        season_id = seasons[0].get("id") if seasons else None
+        if season_id is not None:
+            await self._redis.set(cache_key, str(season_id), ex=CURRENT_SEASON_CACHE_TTL)
+        return season_id
+
     async def _fetch_from_robot_events(self, team_number: str) -> dict[str, Any]:
         token = await self._get_robot_events_token()
         if not token:
@@ -354,18 +462,50 @@ class Scraper:
         team_id = re_team.get("id")
 
         result: dict[str, Any] = {
+            # The VEX Events API's `Team` schema (the RobotEvents ->
+            # events.vex.com migration) has no `bio`/`description` field at
+            # all — it was dropped, not renamed. Left as a no-op lookup so
+            # this starts working again for free if the field is ever added
+            # back, rather than silently deleting the column/feature.
             "bio": re_team.get("description") or re_team.get("bio"),
             "robot_name": re_team.get("robot_name"),
         }
 
         if team_id is not None:
+            program_id = (re_team.get("program") or {}).get("id")
+            season_id = (
+                await self._get_current_season_id(program_id, headers)
+                if program_id is not None
+                else None
+            )
+            if season_id is None:
+                # Can't scope to the current season without a resolved id —
+                # skip rather than pulling this team's full multi-season
+                # history (violates "current season only" and needlessly
+                # burns calls/pagination against a strictly rate-limited
+                # API).
+                logger.warning(
+                    "Could not resolve current season for RE team %s (program %s); "
+                    "skipping rankings/awards/skills fetch",
+                    team_id,
+                    program_id,
+                )
+                result["previous_rankings"] = []
+                result["awards"] = []
+                result["skills_rank"] = None
+                return result
+
+            season_params = {"season[]": season_id}
             # None of these three depend on each other's result — fetch
             # concurrently instead of paying for 3 sequential round-trips
             # per team (this runs once per auto-created team per match).
+            # `season[]` scopes each to the current season only, which also
+            # keeps response sizes (and pagination) down against a strictly
+            # rate-limited API.
             rankings_result, awards_result, skills_result = await asyncio.gather(
-                self._re_http.get(f"/teams/{team_id}/rankings", headers=headers),
-                self._re_http.get(f"/teams/{team_id}/awards", headers=headers),
-                self._re_http.get(f"/teams/{team_id}/skills", headers=headers),
+                self._re_http.get(f"/teams/{team_id}/rankings", params=season_params, headers=headers),
+                self._re_http.get(f"/teams/{team_id}/awards", params=season_params, headers=headers),
+                self._re_http.get(f"/teams/{team_id}/skills", params=season_params, headers=headers),
                 return_exceptions=True,
             )
 
@@ -397,22 +537,18 @@ class Scraper:
                 try:
                     skills_result.raise_for_status()
                     skills_data = skills_result.json().get("data", [])
-                    result["world_skills_rank"] = next(
-                        (
-                            s.get("rank")
-                            for s in skills_data
-                            if (s.get("season", {}) or {}).get("program", {}).get("id") is not None
-                        ),
-                        None,
-                    )
-                    result["uk_skills_rank"] = next(
-                        (
-                            s.get("rank")
-                            for s in skills_data
-                            if "uk" in str(s.get("region", "")).lower()
-                        ),
-                        None,
-                    )
+                    # The VEX Events API's `Skill` schema (the RobotEvents ->
+                    # events.vex.com migration) dropped both `region` and the
+                    # nested `season.program` this used to split ranks into
+                    # "world" vs "UK" championship standings — neither field
+                    # exists on a skills entry any more (only
+                    # id/event/team/type/season/division/rank/score/attempts),
+                    # and recovering the region would mean an extra
+                    # `GET /events/{id}` call per entry. Report a single best
+                    # (lowest = highest-placing) rank across all of this
+                    # team's skills entries instead of a region split.
+                    ranks = [s.get("rank") for s in skills_data if s.get("rank") is not None]
+                    result["skills_rank"] = min(ranks) if ranks else None
                 except Exception:
                     logger.exception("Failed to fetch RE skills for team %s", team_id)
 
@@ -443,8 +579,7 @@ class Scraper:
             "event": tm_data.get("event"),
             "previous_rankings": re_data.get("previous_rankings", []),
             "awards": re_data.get("awards", []),
-            "world_skills_rank": re_data.get("world_skills_rank"),
-            "uk_skills_rank": re_data.get("uk_skills_rank"),
+            "skills_rank": re_data.get("skills_rank"),
             # `team_profiles` has no dedicated organisation/location columns
             # (plan §8's DDL only defines bio/robot_name/etc.) — kept in the
             # flexible cached_stats JSONB rather than silently discarded.

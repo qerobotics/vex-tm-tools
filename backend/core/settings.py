@@ -80,6 +80,16 @@ class Settings(BaseSettings):
         default=None,
         description="Injected via k8s downward API. Falls back to local IP detection.",
     )
+    LOG_LEVEL: str = Field(
+        default="INFO",
+        description=(
+            "Root logger level (DEBUG/INFO/WARNING/ERROR/CRITICAL). Without this "
+            "configured, Python's root logger defaults to WARNING and every "
+            "`logger.info(...)` call in the app — leader promotion/demotion, "
+            "integration status transitions, WS reconnect messages, etc. — is "
+            "silently discarded."
+        ),
+    )
 
 
 @lru_cache
