@@ -227,6 +227,14 @@ def validate_automation_yaml(
     return (len(errors) == 0), errors
 
 
+def validate_script_yaml(action_yaml: str) -> tuple[bool, list[str]]:
+    """Script equivalent of `validate_automation_yaml`'s checks: YAML +
+    Jinja2 syntax only, with no trigger requirement (scripts have no
+    trigger_yaml — they're only ever invoked via a `script: <name>` action
+    entry in an automation)."""
+    return validate_automation_yaml(trigger_yaml="- platform: manual", condition_yaml=None, action_yaml=action_yaml)
+
+
 # ── Compiled automation/script representations ──────────────────────────
 
 

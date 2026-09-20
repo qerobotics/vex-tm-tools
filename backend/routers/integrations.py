@@ -74,6 +74,35 @@ def _load_manifests() -> dict[str, dict[str, Any]]:
     return manifests
 
 
+_CONFIG_SCHEMA_TYPE_CHECKS: dict[str, Any] = {
+    "string": lambda v: isinstance(v, str),
+    "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+    "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+    "boolean": lambda v: isinstance(v, bool),
+}
+
+
+def _validate_config_schema(domain: str, config: dict[str, Any], manifests: dict[str, Any]) -> None:
+    """Enforces each field's declared `type` from the domain's own
+    `manifest.yaml` `config_schema` (plan §11) — only Pydantic-level
+    structural checks (missing/extra fields) were previously applied, so a
+    string like `"not_a_number"` could be saved into a field the domain
+    itself declares `type: integer`. Only checks fields actually present in
+    `config` and whose manifest declares a recognized type; unknown types or
+    absent fields are left alone."""
+    schema = (manifests.get(domain) or {}).get("config_schema", {}) or {}
+    errors: list[str] = []
+    for field, value in config.items():
+        spec = schema.get(field)
+        if not spec or value is None:
+            continue
+        check = _CONFIG_SCHEMA_TYPE_CHECKS.get(spec.get("type"))
+        if check and not check(value):
+            errors.append(f"{field!r} must be of type {spec['type']!r}, got {value!r}")
+    if errors:
+        raise HTTPException(status_code=400, detail={"errors": errors})
+
+
 def _encrypt_secrets(domain: str, config: dict[str, Any], manifests: dict[str, Any]) -> dict[str, Any]:
     schema = (manifests.get(domain) or {}).get("config_schema", {}) or {}
     out = dict(config)
@@ -171,6 +200,8 @@ async def create_integration(
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail=f"Integration {body.entity_id!r} already exists")
 
+    _validate_config_schema(body.domain, body.config, manifests)
+
     row = IntegrationInstance(
         entity_id=body.entity_id,
         domain=body.domain,
@@ -216,6 +247,7 @@ async def update_integration(
     if body.display_name is not None:
         row.display_name = body.display_name
     if body.config is not None:
+        _validate_config_schema(row.domain, body.config, manifests)
         # Merge rather than replace so a client that doesn't resend a
         # redacted secret field (it never sees the real value, see
         # `_redact_secrets`) doesn't accidentally blank it out.
@@ -355,7 +387,14 @@ async def call_integration_service(
 
     row = await _get_or_404(db, entity_id)
     domain_permission = _DOMAIN_PERMISSIONS.get(row.domain)
-    if domain_permission and not principal.has_permission(domain_permission):
+    if domain_permission is None:
+        # Fail closed: a domain missing from this hand-maintained mapping
+        # (e.g. a 6th manifest added without a matching entry here) must
+        # never silently let any authenticated user call its service
+        # actions — that was the previous (falsy-and-not-checked) behavior.
+        logger.error("No _DOMAIN_PERMISSIONS entry for integration domain %r; denying service call", row.domain)
+        raise HTTPException(status_code=403, detail=f"No permission mapping configured for domain {row.domain!r}")
+    if not principal.has_permission(domain_permission):
         raise HTTPException(status_code=403, detail=f"Missing required permission: {domain_permission!r}")
 
     data = data or {}

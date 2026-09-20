@@ -90,10 +90,20 @@ class OIDCClient:
     async def discover(self) -> dict[str, Any]:
         if self._discovery_doc is not None:
             return self._discovery_doc
-        async with self._http_client_factory() as client:
-            resp = await client.get(f"{self.issuer_url}/.well-known/openid-configuration")
-            resp.raise_for_status()
-            self._discovery_doc = resp.json()
+        try:
+            async with self._http_client_factory() as client:
+                resp = await client.get(f"{self.issuer_url}/.well-known/openid-configuration")
+                resp.raise_for_status()
+                self._discovery_doc = resp.json()
+        except httpx.HTTPError as exc:
+            # A configured-but-unreachable issuer (DNS failure, connection
+            # refused, a transient restart) must surface as a clean 503
+            # rather than propagate as an unhandled 500 — this is the one
+            # place every OIDC entry point (`login`, `callback`) reaches to
+            # talk to the issuer.
+            raise HTTPException(
+                status_code=503, detail="OIDC provider is currently unreachable"
+            ) from exc
         return self._discovery_doc
 
     async def jwks(self) -> dict[str, Any]:

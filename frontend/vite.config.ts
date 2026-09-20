@@ -39,7 +39,14 @@ export default defineConfig({
         bypass: (req) => (req.method === 'POST' ? undefined : req.url),
       },
       '/prompter': { target: backendTarget, changeOrigin: true },
-      '/overlay': { target: backendTarget, changeOrigin: true },
+      // Trailing slash matters: this must match only the public OBS
+      // browser-source route `/overlay/{entity_id}` (backend/routers/overlays.py),
+      // not the admin SPA route `/overlays` (pages/Overlays.tsx) — a bare
+      // '/overlay' prefix matches both (Vite's proxy does string-prefix
+      // matching), which sends a hard navigation to /overlays into the
+      // backend's baked-in production index.html instead of this dev
+      // server's own SPA shell, producing a silent blank page.
+      '/overlay/': { target: backendTarget, changeOrigin: true },
       '/ws': { target: backendTarget, changeOrigin: true, ws: true },
     },
   },

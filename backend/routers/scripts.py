@@ -23,6 +23,7 @@ from backend.core.audit import log_action
 from backend.core.dependencies import CurrentPrincipal, get_db, require_permission
 from backend.core.redis import get_redis
 from backend.models.automation import Script
+from backend.modules.automation.engine import validate_script_yaml
 from backend.schemas.automation import ScriptCreate, ScriptRead, ScriptUpdate
 from backend.schemas.events import EventBusMessage
 
@@ -74,6 +75,9 @@ async def create_script(
     redis_client: Any = Depends(get_redis),
     principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
 ) -> ScriptRead:
+    valid, errors = validate_script_yaml(body.action_yaml)
+    if not valid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"errors": errors})
     row = Script(**body.model_dump())
     session.add(row)
     try:
@@ -101,10 +105,18 @@ async def update_script(
     principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
 ) -> ScriptRead:
     row = await _get_script_or_404(session, script_id)
+    updates = {
+        field_name: value
+        for field_name, value in body.model_dump(exclude_unset=True).items()
+        if not (value is None and field_name in {"name", "action_yaml"})
+    }
+
+    valid, errors = validate_script_yaml(updates.get("action_yaml", row.action_yaml))
+    if not valid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"errors": errors})
+
     changed_fields: dict[str, object] = {}
-    for field_name, value in body.model_dump(exclude_unset=True).items():
-        if value is None and field_name in {"name", "action_yaml"}:
-            continue
+    for field_name, value in updates.items():
         setattr(row, field_name, value)
         changed_fields[field_name] = value
     try:

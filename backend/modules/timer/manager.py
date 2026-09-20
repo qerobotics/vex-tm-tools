@@ -417,6 +417,15 @@ class TimerManager:
                             "field_id": cfg.field_id,
                             "remaining": remaining,
                             "elapsed": elapsed,
+                            # Consumers (frontend `stores/ws.ts`) replace their
+                            # whole cached timer state with each event's
+                            # payload rather than merging it — omitting these
+                            # (unlike the PHASE_MATCH_RUNNING branch below,
+                            # which does include them) made every countdown
+                            # tick look like an idle timer in the UI even
+                            # while remaining/elapsed were visibly changing.
+                            "phase": PHASE_COUNTDOWN,
+                            "running": True,
                         },
                     )
                 elif phase == PHASE_MATCH_RUNNING:

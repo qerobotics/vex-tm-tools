@@ -268,6 +268,9 @@ async def create_automation(
     redis_client: Any = Depends(get_redis),
     principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
 ) -> AutomationRead:
+    valid, errors = validate_automation_yaml(body.trigger_yaml, body.condition_yaml, body.action_yaml)
+    if not valid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"errors": errors})
     row = Automation(**body.model_dump())
     session.add(row)
     try:
@@ -304,10 +307,26 @@ async def update_automation(
     # one of those NOT-NULL fields would otherwise pass exclude_unset and
     # fail unhandled at commit, so treat it the same as "not provided"
     # (matches the same rationale in routers/timers.py's update_timer).
+    updates = {
+        field_name: value
+        for field_name, value in body.model_dump(exclude_unset=True).items()
+        if not (value is None and field_name in {"alias", "enabled", "trigger_yaml", "action_yaml"})
+    }
+
+    # Validate the *resulting* YAML (existing value for any field not
+    # touched by this PUT) so a broken edit can't bypass the "Validate"
+    # button and save silently — it would otherwise only surface later, at
+    # execution time, as a confusing unrelated error.
+    valid, errors = validate_automation_yaml(
+        updates.get("trigger_yaml", row.trigger_yaml),
+        updates.get("condition_yaml", row.condition_yaml),
+        updates.get("action_yaml", row.action_yaml),
+    )
+    if not valid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"errors": errors})
+
     changed_fields: dict[str, object] = {}
-    for field_name, value in body.model_dump(exclude_unset=True).items():
-        if value is None and field_name in {"alias", "enabled", "trigger_yaml", "action_yaml"}:
-            continue
+    for field_name, value in updates.items():
         setattr(row, field_name, value)
         changed_fields[field_name] = _json_safe(value)
 

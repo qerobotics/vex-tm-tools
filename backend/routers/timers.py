@@ -17,10 +17,12 @@ rather than importing `require_permission` directly at every route.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,6 +47,8 @@ from backend.schemas.timer import (
 
 import secrets
 import time
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/timers", tags=["timers"])
 
@@ -107,14 +111,46 @@ def _get_timer_manager(request: Request) -> TimerManager | None:
     return getattr(request.app.state, "timer_manager", None)
 
 
-def _require_timer_manager(request: Request) -> TimerManager:
-    manager = _get_timer_manager(request)
-    if manager is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="TimerManager is not running on this node (not the current leader?)",
-        )
-    return manager
+async def _proxy_timer_action_to_leader(
+    request: Request, entity_id: str, action: str
+) -> Response | None:
+    """Passive-node request forwarding, mirroring
+    `routers/integrations.py::_proxy_to_leader`. The `TimerManager` (like
+    the integration `Loader`) only runs on the current leader pod, so a
+    passive pod forwards the start/stop/reset call to the leader's own
+    `/api/v1/timers/{entity_id}/{action}` route (carrying the caller's
+    auth so the leader's own permission check applies) instead of failing
+    with a bare 503. Returns `None` if no leader address can currently be
+    resolved, so the caller falls back to a plain 503."""
+    leader = getattr(request.app.state, "leader", None)
+    if leader is None or leader.is_leader():
+        return None
+
+    leader_address = await leader.get_leader_address_async()
+    if not leader_address:
+        return None
+
+    forward_headers: dict[str, str] = {}
+    auth = request.headers.get("authorization")
+    if auth:
+        forward_headers["authorization"] = auth
+    cookie = request.headers.get("cookie")
+    if cookie:
+        forward_headers["cookie"] = cookie
+
+    url = f"http://{leader_address}/api/v1/timers/{entity_id}/{action}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, headers=forward_headers)
+    except httpx.HTTPError:
+        logger.exception("Failed to proxy timer %s action for %r to leader at %s", action, entity_id, leader_address)
+        return None
+
+    return Response(
+        content=resp.content,
+        status_code=resp.status_code,
+        headers={"content-type": resp.headers.get("content-type", "application/json")},
+    )
 
 
 # ── Timer instance CRUD (plan §11 "Timers") ──────────────────────────────
@@ -246,13 +282,23 @@ async def delete_timer(
 @router.post(
     "/{entity_id}/start",
     dependencies=[_require_permission("prompter:control")],
+    response_model=None,
 )
 async def start_timer(
+    request: Request,
     entity_id: str,
     session: AsyncSession = Depends(get_db),
-    manager: TimerManager = Depends(_require_timer_manager),
-) -> dict:
+) -> dict | Response:
     await get_timer_or_404(session, entity_id)  # 404 before touching the manager
+    manager = _get_timer_manager(request)
+    if manager is None:
+        proxied = await _proxy_timer_action_to_leader(request, entity_id, "start")
+        if proxied is not None:
+            return proxied
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="TimerManager is not running on this node (not the current leader?)",
+        )
     try:
         await manager.start_countdown(entity_id)
     except ValueError as exc:
@@ -263,13 +309,23 @@ async def start_timer(
 @router.post(
     "/{entity_id}/stop",
     dependencies=[_require_permission("prompter:control")],
+    response_model=None,
 )
 async def stop_timer_route(
+    request: Request,
     entity_id: str,
     session: AsyncSession = Depends(get_db),
-    manager: TimerManager = Depends(_require_timer_manager),
-) -> dict:
+) -> dict | Response:
     await get_timer_or_404(session, entity_id)
+    manager = _get_timer_manager(request)
+    if manager is None:
+        proxied = await _proxy_timer_action_to_leader(request, entity_id, "stop")
+        if proxied is not None:
+            return proxied
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="TimerManager is not running on this node (not the current leader?)",
+        )
     try:
         await manager.stop_timer(entity_id)
     except ValueError as exc:
@@ -280,13 +336,23 @@ async def stop_timer_route(
 @router.post(
     "/{entity_id}/reset",
     dependencies=[_require_permission("prompter:control")],
+    response_model=None,
 )
 async def reset_timer_route(
+    request: Request,
     entity_id: str,
     session: AsyncSession = Depends(get_db),
-    manager: TimerManager = Depends(_require_timer_manager),
-) -> dict:
+) -> dict | Response:
     await get_timer_or_404(session, entity_id)
+    manager = _get_timer_manager(request)
+    if manager is None:
+        proxied = await _proxy_timer_action_to_leader(request, entity_id, "reset")
+        if proxied is not None:
+            return proxied
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="TimerManager is not running on this node (not the current leader?)",
+        )
     try:
         await manager.reset_timer(entity_id)
     except ValueError as exc:
