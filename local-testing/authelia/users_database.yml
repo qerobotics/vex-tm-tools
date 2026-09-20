@@ -27,3 +27,10 @@ users:
     groups:
       - qecomp-admin
       - admins
+  qa_viewer:
+    disabled: false
+    displayname: "QA Viewer"
+    password: "$2b$12$ehPds4Hv3uvDPF2wZysnLu5knxMj3OSGyYh1XCRUyNBNDOJVZ9CgG"
+    email: qa_viewer@vex.localhost
+    groups:
+      - qecomp-viewer

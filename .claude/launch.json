@@ -6,6 +6,11 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "frontend", "run", "dev", "--", "--host", "0.0.0.0"],
       "port": 5173
+    },
+    {
+      "name": "qecomp-docker",
+      "url": "https://vex.localhost",
+      "port": 443
     }
   ]
 }
