@@ -15,6 +15,7 @@ import { IntegrationStatusChip } from '../components/integrations/IntegrationSta
 import { TagsEditor } from '../components/integrations/TagsEditor';
 import { AddIntegrationModal } from '../components/integrations/AddIntegrationModal';
 import { SpotifyAuthButton } from '../components/integrations/SpotifyAuthButton';
+import { ZerosPresetsSection } from '../components/integrations/ZerosPresetsSection';
 import type { IntegrationInstance } from '../types/api';
 
 export function IntegrationsPage() {
@@ -169,6 +170,8 @@ function IntegrationRow({
           <SpotifyAuthButton integration={integration} />
         </div>
       )}
+
+      {integration.domain === 'zeros' && <ZerosPresetsSection integration={integration} />}
     </Card>
   );
 }

@@ -10,11 +10,21 @@ may depend on) — just the one helper and the DB session it's given.
 """
 from __future__ import annotations
 
+from contextvars import ContextVar
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.audit import AuditLog
+
+#: Set by `backend.core.request_context`'s ASGI middleware at the top of
+#: every request so `log_action()` can fill in `ip_address` without every
+#: one of its ~26 call sites across `backend/routers/*.py` needing to accept
+#: a `Request` and thread it through — several (folder/script/team CRUD
+#: handlers) don't currently take one at all. Previously `ip_address` was a
+#: real column that no call site ever populated, including ones that already
+#: had a `Request` in scope, leaving it permanently NULL.
+current_request_ip: ContextVar[str | None] = ContextVar("current_request_ip", default=None)
 
 
 async def log_action(
@@ -34,6 +44,10 @@ async def log_action(
     the audit row is logged but never raised — an audit-logging bug must
     never roll back or fail the mutation it's describing, which has already
     committed by the time this is called.
+
+    `ip_address` defaults to the current request's client address (set by
+    the ASGI middleware in `backend.core.request_context`) when the caller
+    doesn't pass one explicitly.
     """
     import logging
 
@@ -43,7 +57,7 @@ async def log_action(
         resource_type=resource_type,
         resource_id=resource_id,
         changes=changes,
-        ip_address=ip_address,
+        ip_address=ip_address if ip_address is not None else current_request_ip.get(),
     )
     session.add(row)
     try:

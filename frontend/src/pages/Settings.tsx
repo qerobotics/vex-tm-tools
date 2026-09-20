@@ -31,6 +31,7 @@ export function SettingsPage() {
   const ntfy = settingValue(settings, 'ntfy');
 
   const [s3Endpoint, setS3Endpoint] = useState('');
+  const [s3PublicEndpoint, setS3PublicEndpoint] = useState('');
   const [s3Bucket, setS3Bucket] = useState('');
   const [s3AccessKey, setS3AccessKey] = useState('');
   const [s3SecretKey, setS3SecretKey] = useState('');
@@ -46,6 +47,7 @@ export function SettingsPage() {
 
   useEffect(() => {
     setS3Endpoint(String(s3.endpoint_url ?? ''));
+    setS3PublicEndpoint(String(s3.public_endpoint_url ?? ''));
     setS3Bucket(String(s3.bucket ?? ''));
     setS3AccessKey(String(s3.access_key ?? ''));
     setS3SecretKey(String(s3.secret_key ?? ''));
@@ -64,7 +66,16 @@ export function SettingsPage() {
   function save() {
     updateSettings.mutate(
       {
-        s3: { value: { endpoint_url: s3Endpoint, bucket: s3Bucket, access_key: s3AccessKey, secret_key: s3SecretKey, region: s3Region } },
+        s3: {
+          value: {
+            endpoint_url: s3Endpoint,
+            public_endpoint_url: s3PublicEndpoint,
+            bucket: s3Bucket,
+            access_key: s3AccessKey,
+            secret_key: s3SecretKey,
+            region: s3Region,
+          },
+        },
         robot_events_api: { value: { token: reToken } },
         predictor: { value: { high_potential_threshold_pct: threshold } },
         chroma_key_defaults: { value: { colour: ckColour, similarity: ckSimilarity, blend: ckBlend } },
@@ -88,6 +99,19 @@ export function SettingsPage() {
             <div>
               <Label>Endpoint URL</Label>
               <Input value={s3Endpoint} onChange={(e) => setS3Endpoint(e.target.value)} disabled={!canEdit} />
+            </div>
+            <div>
+              <Label>Public Endpoint URL (optional)</Label>
+              <Input
+                placeholder="Defaults to Endpoint URL"
+                value={s3PublicEndpoint}
+                onChange={(e) => setS3PublicEndpoint(e.target.value)}
+                disabled={!canEdit}
+              />
+              <p className="mt-1 text-xs text-vmd-textSubtle">
+                Only used to sign presigned video URLs. Set this if Endpoint URL is an
+                internal/in-cluster hostname (e.g. MinIO) a browser can't resolve.
+              </p>
             </div>
             <div>
               <Label>Bucket</Label>

@@ -64,6 +64,15 @@ class Settings(BaseSettings):
     S3_ACCESS_KEY: str | None = Field(default=None)
     S3_SECRET_KEY: str | None = Field(default=None)
     S3_REGION: str = Field(default="us-east-1")
+    S3_PUBLIC_ENDPOINT_URL: str | None = Field(
+        default=None,
+        description=(
+            "Browser-reachable S3 endpoint used only for presigned URLs. Falls back to "
+            "S3_ENDPOINT_URL when unset, which is correct for public AWS S3 but wrong for a "
+            "self-hosted/internal endpoint (e.g. MinIO's in-cluster hostname) that a browser "
+            "can't resolve."
+        ),
+    )
 
     # ── App / cluster ────────────────────────────────────────────────────
     APP_PORT: int = Field(default=8000)

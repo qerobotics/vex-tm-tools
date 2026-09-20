@@ -18,15 +18,20 @@ a real session/JWT/API-key check without touching any route signature here.
 """
 from __future__ import annotations
 
+import logging
+import time
+from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.audit import log_action
 from backend.core.dependencies import CurrentPrincipal, get_db, require_permission
+from backend.core.redis import get_redis
 from backend.models.automation import Automation, AutomationFolder, AutomationRun
 from backend.modules.automation.engine import AutomationEngine, validate_automation_yaml
 from backend.schemas.automation import (
@@ -41,6 +46,9 @@ from backend.schemas.automation import (
     ValidateRequest,
     ValidateResponse,
 )
+from backend.schemas.events import EventBusMessage
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/automations", tags=["automations"])
 
@@ -73,6 +81,26 @@ def _json_safe(value: object) -> object:
     return str(value) if isinstance(value, UUID) else value
 
 
+async def _publish_config_change(redis_client: Any, resource_type: str, entity_id: str, action: str) -> None:
+    """Publishes `config_change` (plan §5.8 point 6) so `AutomationEngine`'s
+    `_config_change_listener` hot-reloads — mirrors `routers/integrations.py`
+    and `routers/timers.py`'s identical helper. Without this, a
+    create/update/delete here is invisible to the real trigger-matching path
+    until the process restarts (`AutomationEngine.trigger()` re-reads fresh
+    from Postgres and is unaffected, which is why "Test Run" masks this)."""
+    msg = EventBusMessage(
+        entity_id=entity_id,
+        entity_tags=[],
+        type="config_change",
+        timestamp=time.time(),
+        payload={"resource_type": resource_type, "entity_id": entity_id, "action": action},
+    )
+    try:
+        await redis_client.publish("qecomp:config_change", msg.model_dump_json())
+    except Exception:
+        pass
+
+
 def _get_engine(request: Request) -> AutomationEngine | None:
     """Best-effort accessor for the `AutomationEngine` singleton `main.py`
     wires onto `app.state` during the leader lifecycle. Returns `None` on a
@@ -81,14 +109,41 @@ def _get_engine(request: Request) -> AutomationEngine | None:
     return getattr(request.app.state, "automation_engine", None)
 
 
-def _require_engine(request: Request) -> AutomationEngine:
-    engine = _get_engine(request)
-    if engine is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AutomationEngine is not running on this node (not the current leader?)",
-        )
-    return engine
+async def _proxy_trigger_to_leader(request: Request, leader: Any, automation_id: UUID) -> Response | None:
+    """Passive-node request forwarding for `/trigger`, mirroring
+    `routers/integrations.py`'s `_proxy_to_leader` (plan §3.1). The
+    `AutomationEngine` only runs on the current leader pod; a passive pod
+    that can't service this locally reads the leader's address from Redis
+    and HTTP-proxies this exact request there, forwarding the caller's
+    `Authorization`/`Cookie` headers so the leader's own permission check
+    sees the same principal. Returns `None` if no leader address can
+    currently be resolved, so the caller falls back to a plain 503."""
+    leader_address = await leader.get_leader_address_async()
+    if not leader_address:
+        return None
+
+    forward_headers: dict[str, str] = {"content-type": "application/json"}
+    auth = request.headers.get("authorization")
+    if auth:
+        forward_headers["authorization"] = auth
+    cookie = request.headers.get("cookie")
+    if cookie:
+        forward_headers["cookie"] = cookie
+
+    url = f"http://{leader_address}/api/v1/automations/{automation_id}/trigger"
+    body = await request.body()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, content=body, headers=forward_headers)
+    except httpx.HTTPError:
+        logger.exception("Failed to proxy automation trigger for %s to leader at %s", automation_id, leader_address)
+        return None
+
+    return Response(
+        content=resp.content,
+        status_code=resp.status_code,
+        headers={"content-type": resp.headers.get("content-type", "application/json")},
+    )
 
 
 # ── Folders (plan §11 "Automations" — automations:read/edit) ────────────
@@ -112,6 +167,7 @@ async def list_folders(session: AsyncSession = Depends(get_db)) -> list[Automati
 async def create_folder(
     body: AutomationFolderCreate,
     session: AsyncSession = Depends(get_db),
+    redis_client: Any = Depends(get_redis),
     principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
 ) -> AutomationFolderRead:
     row = AutomationFolder(**body.model_dump())
@@ -126,6 +182,7 @@ async def create_folder(
         str(row.id),
         changes=body.model_dump(mode="json"),
     )
+    await _publish_config_change(redis_client, "automation_folder", str(row.id), "created")
     return row
 
 
@@ -137,6 +194,7 @@ async def update_folder(
     folder_id: UUID,
     body: AutomationFolderUpdate,
     session: AsyncSession = Depends(get_db),
+    redis_client: Any = Depends(get_redis),
     principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
 ) -> AutomationFolderRead:
     row = await _get_folder_or_404(session, folder_id)
@@ -156,6 +214,7 @@ async def update_folder(
     await log_action(
         session, principal.subject, "update", "automation_folder", str(folder_id), changes=changed_fields
     )
+    await _publish_config_change(redis_client, "automation_folder", str(folder_id), "updated")
     return row
 
 
@@ -167,6 +226,7 @@ async def update_folder(
 async def delete_folder(
     folder_id: UUID,
     session: AsyncSession = Depends(get_db),
+    redis_client: Any = Depends(get_redis),
     principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
 ) -> None:
     row = await _get_folder_or_404(session, folder_id)
@@ -181,6 +241,7 @@ async def delete_folder(
             detail="Cannot delete a folder that still contains automations or subfolders",
         ) from None
     await log_action(session, principal.subject, "delete", "automation_folder", str(folder_id), changes=deleted)
+    await _publish_config_change(redis_client, "automation_folder", str(folder_id), "deleted")
 
 
 # ── Automations CRUD (plan §11 "Automations") ────────────────────────────
@@ -204,6 +265,7 @@ async def list_automations(session: AsyncSession = Depends(get_db)) -> list[Auto
 async def create_automation(
     body: AutomationCreate,
     session: AsyncSession = Depends(get_db),
+    redis_client: Any = Depends(get_redis),
     principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
 ) -> AutomationRead:
     row = Automation(**body.model_dump())
@@ -220,6 +282,7 @@ async def create_automation(
     await log_action(
         session, principal.subject, "create", "automation", str(row.id), changes=body.model_dump(mode="json")
     )
+    await _publish_config_change(redis_client, "automation", str(row.id), "created")
     return row
 
 
@@ -231,6 +294,7 @@ async def update_automation(
     automation_id: UUID,
     body: AutomationUpdate,
     session: AsyncSession = Depends(get_db),
+    redis_client: Any = Depends(get_redis),
     principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
 ) -> AutomationRead:
     row = await _get_automation_or_404(session, automation_id)
@@ -252,6 +316,7 @@ async def update_automation(
     await log_action(
         session, principal.subject, "update", "automation", str(automation_id), changes=changed_fields
     )
+    await _publish_config_change(redis_client, "automation", str(automation_id), "updated")
     return row
 
 
@@ -263,6 +328,7 @@ async def update_automation(
 async def delete_automation(
     automation_id: UUID,
     session: AsyncSession = Depends(get_db),
+    redis_client: Any = Depends(get_redis),
     principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
 ) -> None:
     row = await _get_automation_or_404(session, automation_id)
@@ -270,6 +336,7 @@ async def delete_automation(
     await session.delete(row)
     await session.commit()
     await log_action(session, principal.subject, "delete", "automation", str(automation_id), changes=deleted)
+    await _publish_config_change(redis_client, "automation", str(automation_id), "deleted")
 
 
 # ── Test Run / execution history / validation ────────────────────────────
@@ -277,17 +344,36 @@ async def delete_automation(
 
 @router.post(
     "/{automation_id}/trigger",
-    response_model=TriggerResponse,
+    response_model=None,
 )
 async def trigger_automation(
+    request: Request,
     automation_id: UUID,
     session: AsyncSession = Depends(get_db),
-    engine: AutomationEngine = Depends(_require_engine),
     principal: CurrentPrincipal = Depends(require_permission("automations:trigger")),
-) -> TriggerResponse:
+) -> TriggerResponse | Response:
     """The "Test Run" button (plan §12): fires the automation's action
-    chain immediately, regardless of its trigger/condition."""
+    chain immediately, regardless of its trigger/condition.
+
+    The `AutomationEngine` only runs on the current leader pod. A passive
+    pod forwards this request to the leader instead of a bare 503 (mirrors
+    `routers/integrations.py`'s `call_integration_service`) so a Stream
+    Deck-style trigger behind a load balancer doesn't fail ~50% of the time
+    (plan §3.1)."""
     row = await _get_automation_or_404(session, automation_id)  # 404 before touching the engine
+
+    engine = _get_engine(request)
+    if engine is None:
+        leader = getattr(request.app.state, "leader", None)
+        if leader is not None and not leader.is_leader():
+            proxied = await _proxy_trigger_to_leader(request, leader, automation_id)
+            if proxied is not None:
+                return proxied
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AutomationEngine is not running on this node (not the current leader?)",
+        )
+
     try:
         result = await engine.trigger(automation_id, {})
     except ValueError as exc:

@@ -10,6 +10,8 @@ engine directly since script CRUD has no execution semantics of its own.
 """
 from __future__ import annotations
 
+import time
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -19,10 +21,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.audit import log_action
 from backend.core.dependencies import CurrentPrincipal, get_db, require_permission
+from backend.core.redis import get_redis
 from backend.models.automation import Script
 from backend.schemas.automation import ScriptCreate, ScriptRead, ScriptUpdate
+from backend.schemas.events import EventBusMessage
 
 router = APIRouter(prefix="/api/v1/scripts", tags=["scripts"])
+
+
+async def _publish_config_change(redis_client: Any, script_id: str, action: str) -> None:
+    """Publishes `config_change` (plan §5.8 point 6) so `AutomationEngine`'s
+    `_config_change_listener` hot-reloads its `_scripts` cache — mirrors
+    `routers/automations.py`'s identical helper. Without this, editing a
+    script is invisible for the rest of the process's life to anything that
+    has already resolved it once (`_do_script_action` checks the in-memory
+    cache before falling back to a DB read)."""
+    msg = EventBusMessage(
+        entity_id=script_id,
+        entity_tags=[],
+        type="config_change",
+        timestamp=time.time(),
+        payload={"resource_type": "script", "entity_id": script_id, "action": action},
+    )
+    try:
+        await redis_client.publish("qecomp:config_change", msg.model_dump_json())
+    except Exception:
+        pass
 
 
 async def _get_script_or_404(session: AsyncSession, script_id: UUID) -> Script:
@@ -47,6 +71,7 @@ async def list_scripts(session: AsyncSession = Depends(get_db)) -> list[ScriptRe
 async def create_script(
     body: ScriptCreate,
     session: AsyncSession = Depends(get_db),
+    redis_client: Any = Depends(get_redis),
     principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
 ) -> ScriptRead:
     row = Script(**body.model_dump())
@@ -60,6 +85,7 @@ async def create_script(
         ) from None
     await session.refresh(row)
     await log_action(session, principal.subject, "create", "script", str(row.id), changes=body.model_dump())
+    await _publish_config_change(redis_client, str(row.id), "created")
     return row
 
 
@@ -71,6 +97,7 @@ async def update_script(
     script_id: UUID,
     body: ScriptUpdate,
     session: AsyncSession = Depends(get_db),
+    redis_client: Any = Depends(get_redis),
     principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
 ) -> ScriptRead:
     row = await _get_script_or_404(session, script_id)
@@ -89,6 +116,7 @@ async def update_script(
         ) from None
     await session.refresh(row)
     await log_action(session, principal.subject, "update", "script", str(script_id), changes=changed_fields)
+    await _publish_config_change(redis_client, str(script_id), "updated")
     return row
 
 
@@ -100,6 +128,7 @@ async def update_script(
 async def delete_script(
     script_id: UUID,
     session: AsyncSession = Depends(get_db),
+    redis_client: Any = Depends(get_redis),
     principal: CurrentPrincipal = Depends(require_permission("automations:edit")),
 ) -> None:
     row = await _get_script_or_404(session, script_id)
@@ -107,3 +136,4 @@ async def delete_script(
     await session.delete(row)
     await session.commit()
     await log_action(session, principal.subject, "delete", "script", str(script_id), changes=deleted)
+    await _publish_config_change(redis_client, str(script_id), "deleted")

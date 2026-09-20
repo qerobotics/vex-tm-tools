@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.db import async_session_factory, check_db_connection, engine, get_db
 from backend.core.redis import check_redis_connection, redis_client
+from backend.core.request_context import RequestContextMiddleware
 from backend.core.security import validate_prompter_token
 from backend.core.settings import settings
 from backend.loader import Loader
@@ -242,6 +243,7 @@ def create_app() -> FastAPI:
         version="1.0.0",
         lifespan=lifespan,
     )
+    app.add_middleware(RequestContextMiddleware)
 
     @app.get("/healthz", response_model=HealthResponse, tags=["health"])
     async def healthz() -> HealthResponse:

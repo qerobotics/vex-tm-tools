@@ -1,21 +1,40 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChromaKeyPreview } from './ChromaKeyPreview';
 import { useUploadTeamVideo, useVideoStatus } from '../../api/teams';
+import { useSettings } from '../../api/settings';
 import { usePermission } from '../../hooks/usePermission';
 import { useUiStore } from '../../stores/ui';
 import { Button } from '../ui/Button';
 import { Input, Label } from '../ui/Input';
 
+const FALLBACK_CHROMA_KEY_DEFAULTS = { colour: '#00B140', similarity: 0.1, blend: 0.05 };
+
 export function VideoUploader({ teamNumber }: { teamNumber: string }) {
   const canUpload = usePermission('video:upload');
   const upload = useUploadTeamVideo();
   const { data: status } = useVideoStatus(teamNumber, { pollWhileProcessing: true });
+  // Settings page's "Chroma Key Defaults" section (system_settings key
+  // `chroma_key_defaults`) previously had no reader anywhere in the app —
+  // seed the uploader's sliders from it instead of independent hardcoded
+  // constants, so editing it on the Settings page actually changes what
+  // a fresh upload starts from. Falls back to the same values the backend's
+  // `Form()` defaults use if the setting isn't readable (e.g. a role without
+  // `settings:read`) or hasn't been saved yet.
+  const { data: settings } = useSettings();
+  const chromaKeyDefaults = settings?.find((s) => s.key === 'chroma_key_defaults')?.value;
   const pushToast = useUiStore((s) => s.pushToast);
 
   const [file, setFile] = useState<File | null>(null);
-  const [keyColour, setKeyColour] = useState('#00B140');
-  const [similarity, setSimilarity] = useState(0.1);
-  const [blend, setBlend] = useState(0.05);
+  const [keyColour, setKeyColour] = useState(FALLBACK_CHROMA_KEY_DEFAULTS.colour);
+  const [similarity, setSimilarity] = useState(FALLBACK_CHROMA_KEY_DEFAULTS.similarity);
+  const [blend, setBlend] = useState(FALLBACK_CHROMA_KEY_DEFAULTS.blend);
+
+  useEffect(() => {
+    if (!chromaKeyDefaults) return;
+    setKeyColour(String(chromaKeyDefaults.colour ?? FALLBACK_CHROMA_KEY_DEFAULTS.colour));
+    setSimilarity(Number(chromaKeyDefaults.similarity ?? FALLBACK_CHROMA_KEY_DEFAULTS.similarity));
+    setBlend(Number(chromaKeyDefaults.blend ?? FALLBACK_CHROMA_KEY_DEFAULTS.blend));
+  }, [chromaKeyDefaults]);
 
   function handleUpload() {
     if (!file) return;
