@@ -1,14 +1,30 @@
-# QEComp
+# VEX TM Tools
+
+[![Tests](https://github.com/qerobotics/vex-tm-tools/actions/workflows/tests.yml/badge.svg)](https://github.com/qerobotics/vex-tm-tools/actions/workflows/tests.yml)
+[![Python 3.13](https://img.shields.io/badge/python-3.13-blue)](backend/requirements.txt)
+[![Node 20](https://img.shields.io/badge/node-20-339933)](frontend/package.json)
+[![Coverage >= 80%](https://img.shields.io/badge/coverage-%E2%89%A580%25-brightgreen)](.github/workflows/tests.yml)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
 VEX TM competition-control system: connects to a VEX TM field-set
 WebSocket/REST API and drives Spotify playback, an ATEM switcher, a ZerOS
 lighting board, and OBS scenes off match events, via a YAML/Jinja2
 automation engine. Full rewrite of the original single-instance Flask/
 JSON-file tool into a clustered FastAPI + Postgres + Redis backend with a
-React admin SPA — see [`tm_update_plan.md`](tm_update_plan.md) for the
-complete design (architecture decisions, schema, API surface, RBAC model,
-deployment plan) and [`docs/API.md`](docs/API.md) for the generated REST
-API reference.
+React admin SPA.
+
+See [`tm_update_plan.md`](tm_update_plan.md) for the complete design
+(architecture decisions, schema, API surface, RBAC model, deployment plan)
+and [`docs/API.md`](docs/API.md) for the generated REST API reference.
+
+## Contents
+
+- [Layout](#layout)
+- [Running it locally](#running-it-locally)
+- [Tests](#tests)
+- [Contribution guidelines](#contribution-guidelines)
+- [Hardware reference](#hardware-reference)
+- [License](#license)
 
 ## Layout
 
@@ -23,6 +39,8 @@ API reference.
 | [`tools/`](tools/) | One-off operational scripts |
 
 ## Running it locally
+
+### Backend + frontend on the host
 
 ```bash
 docker compose up -d postgres redis minio   # backend/frontend run on the host, not in this compose file
@@ -41,13 +59,20 @@ Running the backend on the host this way still needs the manual
 `alembic upgrade head` and, on a fresh MinIO, creating the `S3_BUCKET`
 bucket yourself (e.g. via the MinIO console at `http://localhost:9001`).
 
-If instead you bring up the **full stack in Docker** (`docker compose up -d`,
-building and running the `app` service from this repo's `Dockerfile`
-instead of running backend/frontend on the host), both of those steps
-happen automatically: `compose.yml`'s `migrate` service runs
+### Or: full stack in Docker
+
+```bash
+docker compose up -d
+```
+
+This builds and runs the `app` service from this repo's `Dockerfile`
+instead of running backend/frontend on the host, and handles the two
+manual steps above automatically: `compose.yml`'s `migrate` service runs
 `alembic upgrade head` and its `bucket-init` service creates `S3_BUCKET` in
 MinIO if it doesn't already exist, both before `app` starts (mirroring
 `k8s/deployment.yaml`'s `migrate` init container for the real deployment).
+
+### Logging in
 
 Visit `http://localhost:5173`, and use the emergency admin login at
 `/admin_login` (username `admin_local`, password from the
@@ -108,3 +133,9 @@ over from the project's original notes:
 - **finish** — all lights flash white, spin around, and return to standby
 
 </details>
+
+## License
+
+[AGPL-3.0](LICENSE) — if you run a modified version of this on a server
+that others interact with, you must also make that modified source
+available to them.
