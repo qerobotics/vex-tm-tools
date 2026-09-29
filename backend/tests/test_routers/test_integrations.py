@@ -181,6 +181,70 @@ async def test_secret_field_encrypted_at_rest(client, cleanup_entities, db_engin
     assert decrypt(stored_password) == "supersecret-value"
 
 
+async def test_update_does_not_reencrypt_untouched_secrets(client, cleanup_entities, db_engine):
+    """Regression: PUT merged the stored (already-encrypted) config with the
+    request and then re-encrypted every secret field, so each save wrapped
+    unchanged secrets in another Fernet layer and the loader handed ciphertext
+    to the remote service. Secrets must stay single-encrypted across updates,
+    and echoing back the redaction mask must not overwrite the stored value."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    entity_id = _unique_entity_id("obs")
+    cleanup_entities.append(entity_id)
+    await client.post(
+        "/api/v1/integrations",
+        json={
+            "entity_id": entity_id,
+            "domain": "obs",
+            "display_name": "OBS Reencrypt Test",
+            "config": {"host": "127.0.0.1", "port": 4455, "password": "supersecret-value"},
+            "tags": [],
+        },
+    )
+
+    for config in ({"port": 4456}, {"port": 4457, "password": "\u2022" * 8}):
+        resp = await client.put(f"/api/v1/integrations/{entity_id}", json={"config": config})
+        assert resp.status_code == 200
+
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
+    async with factory() as session:
+        result = await session.execute(
+            IntegrationInstance.__table__.select().where(IntegrationInstance.entity_id == entity_id)
+        )
+        row = result.mappings().one()
+
+    assert row["config"]["port"] == 4457
+    assert decrypt(row["config"]["password"]) == "supersecret-value"
+
+
+async def test_list_and_state_report_shared_redis_status_on_passive_replica(client, cleanup_entities, fake_redis):
+    """Regression: a replica that isn't running the integration (only the
+    leader's `Loader` holds instances) reported DISCONNECTED from its own
+    empty in-memory map, disagreeing with the leader-published status the
+    dashboard's cluster card reads from Redis."""
+    from backend.modules.integrations.base import STATUS_KEY_TMPL
+
+    entity_id = _unique_entity_id("obs")
+    cleanup_entities.append(entity_id)
+    await client.post(
+        "/api/v1/integrations",
+        json={
+            "entity_id": entity_id,
+            "domain": "obs",
+            "display_name": "OBS Shared Status",
+            "config": {"host": "127.0.0.1", "port": 4455, "password": "x"},
+            "tags": [],
+        },
+    )
+    await fake_redis.set(STATUS_KEY_TMPL.format(entity_id=entity_id), "CONNECTED")
+
+    listed = (await client.get("/api/v1/integrations")).json()
+    assert next(r for r in listed if r["entity_id"] == entity_id)["status"] == "CONNECTED"
+
+    state = (await client.get(f"/api/v1/integrations/{entity_id}/state")).json()
+    assert state["status"] == "CONNECTED"
+
+
 async def test_create_duplicate_entity_id_returns_409(client, cleanup_entities):
     entity_id = _unique_entity_id("zeros")
     cleanup_entities.append(entity_id)

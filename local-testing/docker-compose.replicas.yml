@@ -8,8 +8,7 @@
 # AND 3 frontend replicas, exactly like the real deployment.
 #
 # Bring up everything together:
-#   docker compose -p vex-tm-tools-priv --project-directory local-testing \
-#     -f compose.yml -f local-testing/docker-compose.proxy.yml \
+#   docker compose -f compose.yml -f local-testing/docker-compose.proxy.yml \
 #     -f local-testing/docker-compose.replicas.yml \
 #     up -d --scale backend=3 postgres redis minio traefik authelia backend
 #
@@ -25,10 +24,10 @@
 services:
   backend:
     build:
-      context: ..
+      context: .
       dockerfile: Dockerfile
     env_file:
-      - ../.env
+      - .env
     environment:
       # Container-network hostnames, overriding the host-process values in
       # .env (postgres/redis/minio's *published* ports are for host access).
@@ -36,7 +35,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       S3_ENDPOINT_URL: http://minio:9000
     volumes:
-      - ./traefik/certs/vex.localhost.crt:/tmp/vex.localhost.crt:ro
+      - ./local-testing/traefik/certs/vex.localhost.crt:/tmp/vex.localhost.crt:ro
     # httpx (used for OIDC discovery/token exchange) verifies against
     # certifi's bundle, which doesn't know about our self-signed local CA
     # by default — append it before starting, same as the venv/certifi

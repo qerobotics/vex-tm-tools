@@ -31,9 +31,18 @@ const AUDIENCE_DISPLAY_MODES = [
   'ELIMINATION_BRACKET',
 ] as const;
 
-/** Plan §12/§5.16 Match Control: manual override buttons per `vex_tm.*`
- * instance, calling `POST /api/v1/integrations/{entity_id}/service/{service}`
- * (backend/modules/integrations/vex_tm/services.yaml's exact service names). */
+/** Plan §12/§5.16 Match Control, merged with the former Field Monitor page:
+ * per `vex_tm.*` instance, manual override buttons
+ * (`POST /api/v1/integrations/{entity_id}/service/{service}`, exactly the
+ * service names in backend/modules/integrations/vex_tm/services.yaml)
+ * followed by a live card per known field.
+ *
+ * The backend models one `vex_tm` instance = one field set (plan Appendix
+ * B.5) with fields identified only by `fieldID` inside event payloads —
+ * there's no `/api/v1/fields` listing endpoint, so the field cards show
+ * any fieldID that has appeared in a `fieldMatchAssigned`/`upcoming_match`
+ * WS event this session. Fields with no event yet simply don't appear
+ * (there's no static field topology endpoint to seed an empty list from). */
 export function MatchControlPage() {
   useWebSocket('/ws/events');
   const { data: integrations } = useIntegrations();
@@ -41,24 +50,78 @@ export function MatchControlPage() {
 
   return (
     <div>
-      <PageHeader title="Match Control" subtitle="Manual field overrides for VEX TM instances." />
+      <PageHeader
+        title="Match Control"
+        subtitle="Live field states and manual overrides for VEX TM instances."
+      />
       {tmInstances.length === 0 && (
         <p className="text-sm text-vmd-textSubtle">No vex_tm integrations configured yet.</p>
       )}
-      <div className="space-y-4">
+      <div className="space-y-6">
         {tmInstances.map((instance) => (
-          <TmControlCard key={instance.entity_id} instance={instance} />
+          <section key={instance.entity_id}>
+            <TmSectionHeader instance={instance} />
+            <FieldCards />
+          </section>
         ))}
       </div>
     </div>
   );
 }
 
-function TmControlCard({ instance }: { instance: IntegrationInstance }) {
+function FieldCards() {
+  const currentMatches = useWsStore((s) => s.currentMatches);
+  const recentEvents = useWsStore((s) => s.recentEvents);
+  const fieldIds = Object.keys(currentMatches).filter((key) => !key.includes('.'));
+
+  if (fieldIds.length === 0) {
+    return <p className="text-sm text-vmd-textSubtle">No field events observed yet this session.</p>;
+  }
+
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {fieldIds.map((fieldId) => {
+        const match = currentMatches[fieldId];
+        const events = recentEvents.filter((e) => String(e.payload.fieldID ?? '') === fieldId).slice(0, 5);
+        return (
+          <Card key={fieldId}>
+            <p className="mb-1 font-medium text-vmd-textStrong">Field {fieldId}</p>
+            {match ? (
+              <div className="mb-2 text-sm text-vmd-text">
+                <p>
+                  Match {String(match.matchNum ?? '?')} · {String(match.round ?? '')}
+                </p>
+                <p className="text-vmd-textMuted">Red: {(match.redTeams ?? []).join(', ') || '—'}</p>
+                <p className="text-vmd-textMuted">Blue: {(match.blueTeams ?? []).join(', ') || '—'}</p>
+              </div>
+            ) : (
+              <p className="mb-2 text-sm text-vmd-textSubtle">No match queued.</p>
+            )}
+            <p className="mb-1 text-xs font-semibold uppercase text-vmd-textSubtle">Recent events</p>
+            <ul className="space-y-0.5 text-xs text-vmd-textMuted">
+              {events.length === 0 && <li>—</li>}
+              {events.map((e, idx) => (
+                <li key={idx} className="font-mono">
+                  {e.type}
+                </li>
+              ))}
+            </ul>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Field Monitor's per-instance section heading (name + status chip), with
+ * that field set's manual controls beside/under it. TM commands apply to
+ * the whole field set (the websocket protocol has no per-field commands —
+ * see `_SERVICE_COMMANDS` in the vex_tm integration), so the buttons live
+ * here, above the set's field cards. */
+function TmSectionHeader({ instance }: { instance: IntegrationInstance }) {
   const canControl = usePermission('tm:control');
   const pushToast = useUiStore((s) => s.pushToast);
   const callService = useCallIntegrationService();
-  const currentMatches = useWsStore((s) => s.currentMatches);
   const [skillsId, setSkillsId] = useState('');
   const [display, setDisplay] = useState('');
 
@@ -73,41 +136,39 @@ function TmControlCard({ instance }: { instance: IntegrationInstance }) {
   }
 
   const simpleServices: { label: string; service: string }[] = [
-    { label: 'Queue Next', service: 'queue_next_match' },
     { label: 'Queue Prev', service: 'queue_prev_match' },
+    { label: 'Queue Next', service: 'queue_next_match' },
     { label: 'Start Match', service: 'start_match' },
     { label: 'End Early', service: 'end_early' },
     { label: 'Abort', service: 'abort' },
     { label: 'Reset', service: 'reset' },
   ];
 
-  const matchKeys = Object.keys(currentMatches).filter((k) => !k.includes('.'));
-
   return (
-    <Card>
-      <div className="mb-3 flex items-center justify-between">
-        <div>
-          <p className="font-medium text-vmd-textStrong">{instance.display_name}</p>
-          <p className="text-xs text-vmd-textSubtle">{instance.entity_id}</p>
-        </div>
+    <div className="mb-3">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-vmd-textMuted">
+          {instance.display_name}
+        </h2>
         <IntegrationStatusChip integration={instance} />
+        <span className="text-xs text-vmd-textSubtle">{instance.entity_id}</span>
       </div>
 
       {!canControl && (
-        <p className="mb-3 text-xs text-vmd-textSubtle">
+        <p className="mb-2 text-xs text-vmd-textSubtle">
           You lack the <code>tm:control</code> permission — controls are read-only.
         </p>
       )}
 
-      <div className="mb-4 flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {simpleServices.map(({ label, service }) => (
           <Button key={service} disabled={!canControl || callService.isPending} onClick={() => fire(service)}>
             {label}
           </Button>
         ))}
-      </div>
 
-      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span className="mx-1 hidden h-6 w-px bg-vmd-border sm:block" />
+
         {/* GAP (AUDIT_FINDINGS.md 3.5): no backend "list skills runs" endpoint
             exists to populate a real dropdown of available skills-run IDs
             (checked backend/routers/teams.py and the vex_tm integration's
@@ -120,7 +181,7 @@ function TmControlCard({ instance }: { instance: IntegrationInstance }) {
           placeholder="Skills ID"
           value={skillsId}
           onChange={(e) => setSkillsId(e.target.value)}
-          className="w-32"
+          className="w-28"
         />
         <Button
           disabled={!canControl || !skillsId || callService.isPending}
@@ -128,11 +189,11 @@ function TmControlCard({ instance }: { instance: IntegrationInstance }) {
         >
           Queue Skills
         </Button>
-      </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Select value={display} onChange={(e) => setDisplay(e.target.value)} className="w-56">
-          <option value="">Audience display mode…</option>
+        <span className="mx-1 hidden h-6 w-px bg-vmd-border sm:block" />
+
+        <Select value={display} onChange={(e) => setDisplay(e.target.value)} className="w-52">
+          <option value="">Audience display…</option>
           {AUDIENCE_DISPLAY_MODES.map((mode) => (
             <option key={mode} value={mode}>
               {mode}
@@ -143,24 +204,9 @@ function TmControlCard({ instance }: { instance: IntegrationInstance }) {
           disabled={!canControl || !display || callService.isPending}
           onClick={() => fire('set_audience_display', { display })}
         >
-          Set Audience Display
+          Set Display
         </Button>
       </div>
-
-      {matchKeys.length > 0 && (
-        <div className="mt-4 border-t border-vmd-border pt-3 text-sm text-vmd-textMuted">
-          <p className="mb-1 text-xs font-semibold uppercase text-vmd-textSubtle">Live queued matches</p>
-          {matchKeys.map((k) => {
-            const m = currentMatches[k];
-            return (
-              <p key={k}>
-                Field {k}: Match {String(m.matchNum ?? '?')} — Red {(m.redTeams ?? []).join(',')} vs Blue{' '}
-                {(m.blueTeams ?? []).join(',')}
-              </p>
-            );
-          })}
-        </div>
-      )}
-    </Card>
+    </div>
   );
 }

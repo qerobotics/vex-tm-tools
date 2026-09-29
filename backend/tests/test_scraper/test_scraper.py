@@ -234,6 +234,36 @@ async def test_auto_create_if_missing_only_creates_when_absent(
     fetch_spy.assert_not_called()
 
 
+async def test_teams_discovered_creates_only_missing_teams(
+    scraper, session_factory, cleanup_team, mocker
+):
+    """The schedule poll publishes every team it sees; profiles must be
+    created up front for the ones that don't exist yet, and skipped for the
+    ones that do."""
+    existing = f"T{uuid.uuid4().hex[:6]}"
+    missing = f"T{uuid.uuid4().hex[:6]}"
+    cleanup_team(existing)
+    cleanup_team(missing)
+    async with session_factory() as session:
+        session.add(TeamProfile(team_number=existing))
+        await session.commit()
+
+    fetch_spy = mocker.patch.object(scraper, "fetch_team", new_callable=mocker.AsyncMock)
+    await scraper._handle_teams_discovered(
+        json.dumps({"entity_id": "vex_tm.division_1", "teams": [existing, missing]})
+    )
+    await scraper._backfill_task
+
+    fetch_spy.assert_awaited_once_with(missing, "vex_tm.division_1")
+
+
+async def test_teams_discovered_ignores_malformed_message(scraper, mocker):
+    spy = mocker.patch.object(scraper, "fetch_team", new_callable=mocker.AsyncMock)
+    await scraper._handle_teams_discovered("not json")
+    assert scraper._backfill_task is None
+    spy.assert_not_called()
+
+
 async def test_handle_raw_message_ignores_non_matching_event_types(scraper, mocker):
     spy = mocker.patch.object(scraper, "_auto_create_if_missing", new_callable=mocker.AsyncMock)
     event = EventBusMessage(
