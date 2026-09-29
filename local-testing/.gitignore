@@ -15,3 +15,6 @@ authelia/db.sqlite3
 traefik/certs/*.key
 traefik/certs/*.crt
 traefik/traefik-local-ca.pem
+
+# Local user accounts (password hashes) — generated from users_database.example.yml by setup.sh.
+authelia/users_database.yml

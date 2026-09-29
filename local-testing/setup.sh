@@ -40,10 +40,20 @@ if [ ! -f authelia/.oidc_client_secret_hash ]; then
 		| grep -oE '\$pbkdf2.*' > authelia/.oidc_client_secret_hash
 fi
 
-# users_database.yml and configuration.yml's client_secret digest are
-# checked in with the placeholder values this script produces the first
-# time it runs — if you regenerate the admin password or client secret
-# hash above, paste the new digest into both files yourself.
+# authelia/users_database.yml is gitignored (it holds local users' password
+# hashes); create it from the committed template on first run. Add more users
+# by hand — see the template's header. configuration.yml's client_secret
+# digest is checked in with the placeholder this script produces the first
+# time it runs — if you regenerate the client secret hash above, paste the new
+# digest into configuration.yml yourself.
+if [ ! -f authelia/users_database.yml ]; then
+	admin_hash="$(cat authelia/.admin_password_hash)"
+	python3 - "$admin_hash" <<'PY'
+import sys
+src = open("authelia/users_database.example.yml").read()
+open("authelia/users_database.yml", "w").write(src.replace("__ADMIN_PASSWORD_HASH__", sys.argv[1]))
+PY
+fi
 echo "Authelia admin login: username 'admin', password: $(cat authelia/.admin_password_plaintext)"
 echo "QEComp OIDC_CLIENT_SECRET env var value: $(cat authelia/.oidc_client_secret_plaintext)"
 

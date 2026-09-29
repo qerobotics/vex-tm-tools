@@ -1,0 +1,16 @@
+---
+# Template for Authelia's local file-based user database. `setup.sh` copies
+# this to `users_database.yml` (gitignored — it holds password hashes for
+# whoever you add locally) and fills in the admin hash it generates.
+# Not for production use. Add more users by copying the `admin` block and
+# generating a bcrypt hash:
+#   docker run --rm authelia/authelia:latest authelia crypto hash generate bcrypt --password '<password>'
+users:
+  admin:
+    disabled: false
+    displayname: "QEComp Admin"
+    password: "__ADMIN_PASSWORD_HASH__"
+    email: admin@vex.localhost
+    groups:
+      - qecomp-admin
+      - admins
