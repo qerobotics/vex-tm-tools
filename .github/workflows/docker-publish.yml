@@ -5,11 +5,14 @@ name: Docker
 # separate terms of service, privacy policy, and support
 # documentation.
 #
-# Builds linux/amd64 and linux/arm64 natively (one job per arch, on GitHub's
-# own amd64/arm64 runners — no QEMU emulation) and merges them into a single
-# multi-arch manifest, so `docker pull` on an arm64 host (e.g. an Apple
-# Silicon dev machine, or an arm64 k8s node) doesn't fail — the previous
-# single-job build only ever produced a linux/amd64 image.
+# Publishes two images to the same repository, told apart by tag:
+#   ghcr.io/<repo>:backend   the API with the built SPA bundled in (Dockerfile `backend` target)
+#   ghcr.io/<repo>:frontend  just the built SPA behind nginx        (Dockerfile `frontend` target)
+#
+# Each image is built for linux/amd64 and linux/arm64 natively (one job per
+# arch, on GitHub's own amd64/arm64 runners — no QEMU emulation) and merged
+# into a single multi-arch manifest, so `docker pull` on an arm64 host (e.g.
+# an Apple Silicon dev machine, or an arm64 k8s node) doesn't fail.
 
 on:
   schedule:
@@ -28,29 +31,14 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  meta:
-    runs-on: ubuntu-latest
-    outputs:
-      tags: ${{ steps.meta.outputs.tags }}
-      labels: ${{ steps.meta.outputs.labels }}
-    steps:
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-
   build:
-    needs: meta
-    runs-on: ${{ matrix.runner }}
+    # Native builds: arm64 on GitHub's arm runner, amd64 on the default one.
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: ubuntu-latest
-            platform: linux/amd64
-          - runner: ubuntu-24.04-arm
-            platform: linux/arm64
+        component: [ backend, frontend ]
+        platform: [ linux/amd64, linux/arm64 ]
     permissions:
       contents: read
       packages: write
@@ -72,31 +60,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # On a PR this just validates the Dockerfile builds for this
+      # On a PR this just validates the Dockerfile target builds for this
       # platform — nothing is pushed, so there's no digest to merge later.
-      - name: Build (PR — no push)
+      - name: Build ${{ matrix.component }} (PR — no push)
         if: github.event_name == 'pull_request'
         uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
         with:
           context: .
+          target: ${{ matrix.component }}
           platforms: ${{ matrix.platform }}
           push: false
-          cache-from: type=gha,scope=${{ matrix.platform }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+          cache-from: type=gha,scope=${{ matrix.component }}-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}-${{ matrix.platform }}
 
       # Push by digest (not by tag) — each arch's build pushes an
       # untagged, platform-specific image; the merge job below combines
       # both digests into one multi-arch manifest under the real tags.
-      - name: Build and push by digest
+      - name: Build and push ${{ matrix.component }} by digest
         id: build
         if: github.event_name != 'pull_request'
         uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
         with:
           context: .
+          target: ${{ matrix.component }}
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ matrix.platform }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+          cache-from: type=gha,scope=${{ matrix.component }}-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}-${{ matrix.platform }}
 
       - name: Export digest
         if: github.event_name != 'pull_request'
@@ -109,15 +99,19 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: digests-${{ strategy.job-index }}
+          name: digests-${{ matrix.component }}-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
 
   merge:
-    needs: [meta, build]
+    needs: build
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [ backend, frontend ]
     permissions:
       contents: read
       packages: write
@@ -129,11 +123,24 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
-          pattern: digests-*
+          pattern: digests-${{ matrix.component }}-*
           merge-multiple: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f95db51fddba0c2d1ec667646a06c2ce06100226 # v3.0.0
+
+      # Tags: the moving `:backend` / `:frontend` tag (what deployments pull),
+      # plus an immutable `<short-sha>-<component>` tag and, for `vX.Y.Z` git
+      # tags, `<version>-<component>`.
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ matrix.component }}
+            type=sha,prefix=,suffix=-${{ matrix.component }}
+            type=semver,pattern={{version}},suffix=-${{ matrix.component }}
 
       - name: Log into registry ${{ env.REGISTRY }}
         uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d # v3.0.0
@@ -146,7 +153,7 @@ jobs:
         working-directory: /tmp/digests
         env:
           # metadata-action's `tags` output is one tag per line.
-          TAGS: ${{ needs.meta.outputs.tags }}
+          TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           TAG_ARGS=$(echo "$TAGS" | xargs -I {} echo -n "-t {} ")
           docker buildx imagetools create $TAG_ARGS \
@@ -154,7 +161,7 @@ jobs:
 
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect $(echo "${{ needs.meta.outputs.tags }}" | head -n1)
+          docker buildx imagetools inspect $(echo "${{ steps.meta.outputs.tags }}" | head -n1)
 
       # Install cosign to sign the resulting multi-arch manifest.
       # https://github.com/sigstore/cosign-installer
@@ -171,5 +178,5 @@ jobs:
       # https://github.com/sigstore/cosign
       - name: Sign the published Docker image
         env:
-          TAGS: ${{ needs.meta.outputs.tags }}
+          TAGS: ${{ steps.meta.outputs.tags }}
         run: echo "${TAGS}" | xargs -I {} cosign sign --yes {}
