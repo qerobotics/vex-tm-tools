@@ -24,7 +24,17 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-FROM python:3.12-slim
+# `frontend` image target: just the built SPA behind nginx (non-root, port
+# 8080), for deployments that serve the frontend separately from the API.
+# Build with `docker build --target frontend .`
+FROM nginxinc/nginx-unprivileged:1.27-alpine AS frontend
+COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=frontend-builder /app/frontend/dist /usr/share/nginx/html
+EXPOSE 8080
+
+# `backend` image target (also the default — it is the last stage): the API
+# with the built SPA bundled in and served from the same origin.
+FROM python:3.12-slim AS backend
 
 # ffmpeg: required by backend/modules/media/processor.py's green-screen
 # keying pipeline. libvpx-dev: WebM/VP9 encoding support for the same
