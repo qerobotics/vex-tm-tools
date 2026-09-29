@@ -33,9 +33,9 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
-      - ./traefik/dynamic:/etc/traefik/dynamic:ro
-      - ./traefik/certs:/etc/traefik/certs:ro
+      - ./local-testing/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./local-testing/traefik/dynamic:/etc/traefik/dynamic:ro
+      - ./local-testing/traefik/certs:/etc/traefik/certs:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       proxy:
@@ -51,14 +51,14 @@ services:
     image: authelia/authelia:latest
     container_name: qecomp-authelia
     volumes:
-      - ./authelia/configuration.yml:/config/configuration.yml:ro
-      - ./authelia/users_database.yml:/config/users_database.yml:ro
+      - ./local-testing/authelia/configuration.yml:/config/configuration.yml:ro
+      - ./local-testing/authelia/users_database.yml:/config/users_database.yml:ro
       - qecomp_authelia_data:/config/data
-      - ./authelia/.jwt_secret:/secrets/jwt_secret:ro
-      - ./authelia/.session_secret:/secrets/session_secret:ro
-      - ./authelia/.storage_encryption_key:/secrets/storage_encryption_key:ro
-      - ./authelia/.oidc_hmac_secret:/secrets/oidc_hmac_secret:ro
-      - ./authelia/oidc_issuer_private_key.pem:/secrets/oidc_issuer_private_key.pem:ro
+      - ./local-testing/authelia/.jwt_secret:/secrets/jwt_secret:ro
+      - ./local-testing/authelia/.session_secret:/secrets/session_secret:ro
+      - ./local-testing/authelia/.storage_encryption_key:/secrets/storage_encryption_key:ro
+      - ./local-testing/authelia/.oidc_hmac_secret:/secrets/oidc_hmac_secret:ro
+      - ./local-testing/authelia/oidc_issuer_private_key.pem:/secrets/oidc_issuer_private_key.pem:ro
     environment:
       AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET_FILE: /secrets/jwt_secret
       AUTHELIA_SESSION_SECRET_FILE: /secrets/session_secret

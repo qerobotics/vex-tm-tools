@@ -1,9 +1,8 @@
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { ProtectedLayout } from './components/layout/ProtectedLayout';
 import { AdminLoginPage } from './pages/AdminLogin';
 import { SpotifyCallbackPage } from './pages/SpotifyCallback';
 import { DashboardPage } from './pages/Dashboard';
-import { FieldMonitorPage } from './pages/FieldMonitor';
 import { MatchControlPage } from './pages/MatchControl';
 import { IntegrationsPage } from './pages/Integrations';
 import { AutomationsPage } from './pages/Automations';
@@ -31,7 +30,8 @@ export const router = createBrowserRouter([
     element: <ProtectedLayout />,
     children: [
       { index: true, element: <DashboardPage /> },
-      { path: 'fields', element: <FieldMonitorPage /> },
+      // Field Monitor was merged into Match Control; keep old links working.
+      { path: 'fields', element: <Navigate to="/match-control" replace /> },
       { path: 'match-control', element: <MatchControlPage /> },
       { path: 'integrations', element: <IntegrationsPage /> },
       { path: 'automations', element: <AutomationsPage /> },

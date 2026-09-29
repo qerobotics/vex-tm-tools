@@ -58,6 +58,9 @@ from backend.schemas.events import EventBusMessage
 logger = logging.getLogger(__name__)
 
 EVENTS_CHANNEL = "qecomp:events"
+# Published by the vex_tm integration after each schedule poll (see
+# `_fetch_and_cache_schedule`): {"entity_id": ..., "teams": [...]}.
+TEAMS_DISCOVERED_CHANNEL = "qecomp:tm_teams_discovered"
 TEAM_PROFILE_CACHE_TTL = 60 * 60 * 24  # 24h, per plan §5.11 / §8.
 # The VEX Events API is strictly rate-limited, so the resolved "current
 # season" id for a program is cached rather than re-fetched on every team
@@ -96,6 +99,7 @@ class Scraper:
         self._session_factory = session_factory
 
         self._task: asyncio.Task | None = None
+        self._backfill_task: asyncio.Task | None = None
         self._pubsub = None
         self._shutdown = asyncio.Event()
 
@@ -111,7 +115,7 @@ class Scraper:
         `fieldMatchAssigned` events in a background task."""
         self._shutdown.clear()
         self._pubsub = self._redis.pubsub()
-        await self._pubsub.subscribe(EVENTS_CHANNEL)
+        await self._pubsub.subscribe(EVENTS_CHANNEL, TEAMS_DISCOVERED_CHANNEL)
         self._task = asyncio.create_task(self._listen_loop())
 
     async def stop(self) -> None:
@@ -123,9 +127,16 @@ class Scraper:
             except (asyncio.CancelledError, Exception):
                 pass
             self._task = None
+        if self._backfill_task is not None:
+            self._backfill_task.cancel()
+            try:
+                await self._backfill_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._backfill_task = None
         if self._pubsub is not None:
             try:
-                await self._pubsub.unsubscribe(EVENTS_CHANNEL)
+                await self._pubsub.unsubscribe(EVENTS_CHANNEL, TEAMS_DISCOVERED_CHANNEL)
                 await self._pubsub.aclose()
             except Exception:
                 logger.exception("Error closing scraper pubsub connection")
@@ -144,7 +155,13 @@ class Scraper:
                     break
                 if message is None or message.get("type") != "message":
                     continue
-                await self._handle_raw_message(message.get("data"))
+                channel = message.get("channel")
+                if isinstance(channel, bytes):
+                    channel = channel.decode("utf-8")
+                if channel == TEAMS_DISCOVERED_CHANNEL:
+                    await self._handle_teams_discovered(message.get("data"))
+                else:
+                    await self._handle_raw_message(message.get("data"))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -171,6 +188,40 @@ class Scraper:
                 logger.exception(
                     "Failed to auto-create/refresh team profile for %s", team_number
                 )
+
+    async def _handle_teams_discovered(self, data: Any) -> None:
+        """Create profiles for every team in a freshly polled schedule that
+        doesn't have one yet. Runs in a background task (one at a time — a
+        poll that lands mid-backfill is skipped, the next poll retries) so a
+        big event's worth of TM/Vex Events lookups never blocks the listen
+        loop that handles live `fieldMatchAssigned` events."""
+        try:
+            payload = json.loads(data) if isinstance(data, (str, bytes)) else data
+            tm_entity_id = str(payload["entity_id"])
+            teams = [str(t) for t in payload["teams"]]
+        except Exception:
+            logger.warning("Scraper received malformed teams-discovered message: %r", data)
+            return
+        if self._backfill_task is not None and not self._backfill_task.done():
+            return
+        self._backfill_task = asyncio.create_task(self._backfill_teams(tm_entity_id, teams))
+
+    async def _backfill_teams(self, tm_entity_id: str, teams: list[str]) -> None:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(TeamProfile.team_number).where(TeamProfile.team_number.in_(teams))
+            )
+            existing = set(result.scalars().all())
+        missing = [t for t in teams if t not in existing]
+        if missing:
+            logger.info("Creating %d team profile(s) from schedule for %s", len(missing), tm_entity_id)
+        for team_number in missing:
+            if self._shutdown.is_set():
+                return
+            try:
+                await self.fetch_team(team_number, tm_entity_id)
+            except Exception:
+                logger.exception("Failed to create team profile for %s from schedule", team_number)
 
     async def _auto_create_if_missing(self, team_number: str, tm_entity_id: str) -> None:
         async with self._session_factory() as session:

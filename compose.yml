@@ -88,7 +88,7 @@ services:
   # MinIO Client image rather than scripting `curl`/`aws` by hand.
   bucket-init:
     container_name: qecomp-bucket-init
-    image: minio/mc:latest
+    image: cgr.dev/chainguard/minio-client:latest-dev
     env_file:
       - .env
     environment:
@@ -139,7 +139,7 @@ services:
 
   minio:
     container_name: qecomp-minio
-    image: minio/minio:latest
+    image: cgr.dev/chainguard/minio:latest-dev
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -150,7 +150,7 @@ services:
     volumes:
       - qecomp_minio_data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/minio/health/live >/dev/null"]
       interval: 5s
       timeout: 5s
       retries: 10

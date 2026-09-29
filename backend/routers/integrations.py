@@ -31,6 +31,7 @@ from backend.core.service_validation import (
 )
 from backend.loader import INTEGRATIONS_DIR
 from backend.models.integration import IntegrationInstance
+from backend.modules.integrations.base import STATUS_KEY_TMPL
 from backend.schemas.events import EventBusMessage
 from backend.schemas.integration import (
     IntegrationInstanceCreate,
@@ -103,6 +104,9 @@ def _validate_config_schema(domain: str, config: dict[str, Any], manifests: dict
         raise HTTPException(status_code=400, detail={"errors": errors})
 
 
+_SECRET_MASK = "••••••••"
+
+
 def _encrypt_secrets(domain: str, config: dict[str, Any], manifests: dict[str, Any]) -> dict[str, Any]:
     schema = (manifests.get(domain) or {}).get("config_schema", {}) or {}
     out = dict(config)
@@ -119,7 +123,7 @@ def _redact_secrets(domain: str, config: dict[str, Any], manifests: dict[str, An
     out = dict(config)
     for field, spec in schema.items():
         if spec.get("secret") and out.get(field):
-            out[field] = "••••••••"
+            out[field] = _SECRET_MASK
     return out
 
 
@@ -137,10 +141,30 @@ async def _publish_config_change(redis_client: Any, entity_id: str, action: str,
         logger.exception("Failed to publish config_change for %s", entity_id)
 
 
-def _to_read(row: IntegrationInstance, manifests: dict[str, Any]) -> IntegrationInstanceRead:
+async def _shared_status(redis_client: Any, entity_id: str) -> str:
+    """Integration status as published by whichever pod is the leader.
+
+    The `Loader` (and its in-memory status map) only runs on the leader, so
+    a passive replica's `loader.get_instance_status()` is always
+    DISCONNECTED. The leader mirrors every status change to Redis (see
+    `Loader._set_status`), which every replica shares — same source the
+    `/status` endpoint uses. Falls back to the local loader if Redis has
+    nothing (or is unreachable)."""
+    try:
+        status = await redis_client.get(STATUS_KEY_TMPL.format(entity_id=entity_id))
+    except Exception:
+        status = None
+    if isinstance(status, bytes):
+        status = status.decode("utf-8")
+    return status or loader.get_instance_status(entity_id)
+
+
+async def _to_read(
+    row: IntegrationInstance, manifests: dict[str, Any], redis_client: Any
+) -> IntegrationInstanceRead:
     read = IntegrationInstanceRead.model_validate(row)
     read.config = _redact_secrets(row.domain, dict(row.config or {}), manifests)
-    read.status = loader.get_instance_status(row.entity_id)
+    read.status = await _shared_status(redis_client, row.entity_id)
     return read
 
 
@@ -173,10 +197,13 @@ async def list_integration_schemas() -> dict[str, Any]:
     response_model=list[IntegrationInstanceRead],
     dependencies=[Depends(require_permission("integrations:read"))],
 )
-async def list_integrations(db: Annotated[AsyncSession, Depends(get_db)]) -> list[IntegrationInstanceRead]:
+async def list_integrations(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    redis_client: Any = Depends(get_redis),
+) -> list[IntegrationInstanceRead]:
     manifests = _load_manifests()
     result = await db.execute(select(IntegrationInstance).order_by(IntegrationInstance.display_name))
-    return [_to_read(row, manifests) for row in result.scalars().all()]
+    return [await _to_read(row, manifests, redis_client) for row in result.scalars().all()]
 
 
 @router.post(
@@ -227,7 +254,7 @@ async def create_integration(
         row.entity_id,
         changes={"config": _redact_secrets(row.domain, dict(row.config or {}), manifests), "domain": row.domain},
     )
-    return _to_read(row, manifests)
+    return await _to_read(row, manifests, redis_client)
 
 
 @router.put(
@@ -251,9 +278,21 @@ async def update_integration(
         # Merge rather than replace so a client that doesn't resend a
         # redacted secret field (it never sees the real value, see
         # `_redact_secrets`) doesn't accidentally blank it out.
+        # Only encrypt what the client actually sent: the stored values in
+        # `row.config` are already ciphertext, and re-encrypting them on
+        # every save wraps secrets in another layer each time (the backend
+        # then hands ciphertext to the remote service as the credential).
+        # A client echoing back the redaction mask must not overwrite the
+        # stored secret either.
+        schema = (manifests.get(row.domain) or {}).get("config_schema", {}) or {}
+        incoming = {
+            k: v
+            for k, v in body.config.items()
+            if not (schema.get(k, {}).get("secret") and v == _SECRET_MASK)
+        }
         merged = dict(row.config or {})
-        merged.update(body.config)
-        row.config = _encrypt_secrets(row.domain, merged, manifests)
+        merged.update(_encrypt_secrets(row.domain, incoming, manifests))
+        row.config = merged
     if body.enabled is not None:
         row.enabled = body.enabled
     if body.tags is not None:
@@ -271,7 +310,7 @@ async def update_integration(
         row.entity_id,
         changes={"config": _redact_secrets(row.domain, dict(row.config or {}), manifests)},
     )
-    return _to_read(row, manifests)
+    return await _to_read(row, manifests, redis_client)
 
 
 @router.delete(
@@ -313,7 +352,7 @@ _DOMAIN_PERMISSIONS = {
 
 
 async def _proxy_to_leader(
-    request: Request, leader: Any, entity_id: str, service: str
+    request: Request, leader: Any, entity_id: str, service: str | None = None, *, method: str = "POST", suffix: str | None = None
 ) -> Response | None:
     """Passive-node request forwarding (plan §3.1).
 
@@ -340,11 +379,12 @@ async def _proxy_to_leader(
     if cookie:
         forward_headers["cookie"] = cookie
 
-    url = f"http://{leader_address}/api/v1/integrations/{entity_id}/service/{service}"
-    body = await request.body()
+    path = suffix if suffix is not None else f"service/{service}"
+    url = f"http://{leader_address}/api/v1/integrations/{entity_id}/{path}"
+    body = await request.body() if method == "POST" else None
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(url, content=body, headers=forward_headers)
+            resp = await client.request(method, url, content=body, headers=forward_headers)
     except httpx.HTTPError:
         logger.exception("Failed to proxy service call for %r to leader at %s", entity_id, leader_address)
         return None
@@ -476,12 +516,21 @@ async def set_oauth_token(
     "/{entity_id}/state",
     dependencies=[Depends(require_permission("integrations:read"))],
 )
-async def get_integration_state(entity_id: str) -> dict[str, Any]:
+async def get_integration_state(
+    entity_id: str, request: Request, redis_client: Any = Depends(get_redis)
+) -> Any:
     instance = loader.get_instance(entity_id)
     if instance is None:
-        return {"entity_id": entity_id, "status": loader.get_instance_status(entity_id), "state": {}}
+        # Live state (websocket/connection/last event) exists only in the
+        # leader's memory — a passive replica forwards the read there.
+        leader = getattr(request.app.state, "leader", None)
+        if leader is not None and not leader.is_leader():
+            proxied = await _proxy_to_leader(request, leader, entity_id, method="GET", suffix="state")
+            if proxied is not None:
+                return proxied
+        return {"entity_id": entity_id, "status": await _shared_status(redis_client, entity_id), "state": {}}
     state = await instance.get_state()
-    return {"entity_id": entity_id, "status": loader.get_instance_status(entity_id), "state": state}
+    return {"entity_id": entity_id, "status": await _shared_status(redis_client, entity_id), "state": state}
 
 
 @router.post(

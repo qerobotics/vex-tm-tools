@@ -1,7 +1,6 @@
 import {
   LayoutDashboard,
   MonitorPlay,
-  Radio,
   Plug,
   Workflow,
   FileCode2,
@@ -29,7 +28,6 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/fields', label: 'Field Monitor', icon: Radio },
   { to: '/match-control', label: 'Match Control', icon: MonitorPlay },
   { to: '/integrations', label: 'Integrations', icon: Plug },
   { to: '/automations', label: 'Automations', icon: Workflow },

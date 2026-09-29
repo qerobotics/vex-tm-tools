@@ -46,6 +46,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_AUTH_URL = "https://auth.vextm.dwabtech.com/oauth2/token"
 EVENTS_CHANNEL = "qecomp:events"
+# Teams found in the polled schedule, for the scraper to create profiles for
+# (kept off `qecomp:events` so it doesn't show up in the live feed/automations).
+TEAMS_DISCOVERED_CHANNEL = "qecomp:tm_teams_discovered"
 TOKEN_KEY_TMPL = "qecomp:tm:{entity_id}:token"
 SCHEDULE_KEY_TMPL = "qecomp:tm:{entity_id}:schedule"
 
@@ -508,6 +511,19 @@ class VexTmIntegration(Integration):
 
         key = SCHEDULE_KEY_TMPL.format(entity_id=self.entity_id)
         await self._redis.set(key, json.dumps(schedule))
+
+        # Every team that appears in the schedule, so the scraper can create
+        # profiles up front instead of only when a match is first queued.
+        teams = sorted(
+            {t for entry in self._match_index.values() for t in (*entry["redTeams"], *entry["blueTeams"]) if t},
+        )
+        if teams:
+            try:
+                await self._redis.publish(
+                    TEAMS_DISCOVERED_CHANNEL, json.dumps({"entity_id": self.entity_id, "teams": teams})
+                )
+            except Exception:
+                logger.exception("vex_tm[%s]: failed to publish discovered teams", self.entity_id)
 
     async def _fetch_and_index_division(self, division_id: Any) -> None:
         """On-demand fetch of a single division's schedule, for the cache-miss
